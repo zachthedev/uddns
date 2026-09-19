@@ -151,6 +151,48 @@ describe('Worker fetch handler', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Request logging  (the console.log at the top of fetch)
+	// -------------------------------------------------------------------------
+
+	describe('Request logging', () => {
+		const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
+		// The topic is the only thing guarding who can read a caller's
+		// notifications, and it rides in the query string.
+		const ntfy = 'https://ntfy.sh/secret-topic-9f3a';
+
+		it('logs the path and puts no query string on any console sink', async () => {
+			// Every sink, not just the one the handler uses today: the property
+			// is that the topic never reaches logs, whichever call emits it.
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+			mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
+
+			const request = createMockRequest(
+				`https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com&zone=example.com&ntfy=${encodeURIComponent(ntfy)}`,
+				{ headers: validAuth },
+			);
+
+			await worker.fetch(request, env, ctx);
+
+			expect(JSON.stringify(logSpy.mock.calls)).toContain('/update');
+			// JSON.stringify renders an Error as {}, since message and stack are not
+			// enumerable, and Workers Logs records both.
+			const emitted = JSON.stringify(
+				[...logSpy.mock.calls, ...errorSpy.mock.calls, ...warnSpy.mock.calls].map((args) =>
+					args.map((arg) => (arg instanceof Error ? { message: arg.message, stack: arg.stack } : arg)),
+				),
+			);
+			expect(emitted).not.toContain('secret-topic-9f3a');
+			expect(emitted).not.toContain('ntfy=');
+			expect(emitted).not.toContain('hostnames=');
+			expect(emitted).not.toContain('ip4=');
+			expect(emitted).not.toContain('zone=');
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// Rate limiter  (RATE_LIMITER binding, first thing in the try block)
 	// -------------------------------------------------------------------------
 

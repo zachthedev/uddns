@@ -1120,12 +1120,17 @@ async function handleHistory(auth: ParsedAuth, request: Request, env: Env): Prom
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		const { pathname } = new URL(request.url);
+
 		// The handler only consumes query params; never log request bodies
 		// (unauthenticated callers could write arbitrary content into logs).
+		// The path alone, never the full URL: the query string carries the
+		// caller's ntfy topic, and observability.redact_query_string strips it
+		// from the invocation URL but not from a string this handler builds.
 		console.log('Incoming request:', {
 			ip: request.headers.get('CF-Connecting-IP'),
 			method: request.method,
-			url: request.url,
+			path: pathname,
 		});
 
 		try {
@@ -1140,7 +1145,6 @@ export default {
 			const auth = parseAuthorization(request);
 			await checkAccess(env, request, auth);
 
-			const { pathname } = new URL(request.url);
 			if (pathname === '/history') {
 				if (request.method !== 'GET') {
 					throw new HttpError(405, 'Method not allowed.');

@@ -76,6 +76,10 @@
 	// Docs: https://developers.cloudflare.com/workers/observability/logs/workers-logs/
 	"observability": {
 		"enabled": true,
+		// The query string carries the caller's ntfy topic, which is the only
+		// thing guarding who can read its notifications, alongside the zone and
+		// hostnames it manages. Redaction keeps all of it out of logs and traces.
+		"redact_query_string": true,
 	},
 
 	// Deliberately NO smart placement: the hot path (gated cache hit) is
