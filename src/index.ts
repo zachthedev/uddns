@@ -1122,25 +1122,27 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const { pathname } = new URL(request.url);
 
-		// The handler only consumes query params; never log request bodies
-		// (unauthenticated callers could write arbitrary content into logs).
-		// The path alone, never the full URL: the query string carries the
-		// caller's ntfy topic, and observability.redact_query_string strips it
-		// from the invocation URL but not from a string this handler builds.
-		console.log('Incoming request:', {
-			ip: request.headers.get('CF-Connecting-IP'),
-			method: request.method,
-			path: pathname,
-		});
-
 		try {
-			// Edge-local per-IP throttle, before any other work. Best-effort
-			// (per-colo counters), which is the right tool for cost capping.
+			// Edge-local per-IP throttle, before any other work, logging included.
+			// Invocation logs are off in wrangler.jsonc, so a rejected request
+			// writes no line at all. Best-effort (per-colo counters), which is the
+			// right tool for cost capping.
 			const rateKey = request.headers.get('CF-Connecting-IP') ?? 'unknown';
 			const { success: withinLimit } = await env.RATE_LIMITER.limit({ key: rateKey });
 			if (!withinLimit) {
 				return jsonResponse({ success: false, error: 'Rate limit exceeded.' }, 429);
 			}
+
+			// The handler only consumes query params; never log request bodies
+			// (unauthenticated callers could write arbitrary content into logs).
+			// The path alone, never the full URL: the query string carries the
+			// caller's ntfy topic, and observability.redact_query_string strips it
+			// from the invocation URL but not from a string this handler builds.
+			console.log('Incoming request:', {
+				ip: request.headers.get('CF-Connecting-IP'),
+				method: request.method,
+				path: pathname,
+			});
 
 			const auth = parseAuthorization(request);
 			await checkAccess(env, request, auth);
