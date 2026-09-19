@@ -74,7 +74,7 @@ jobs:
 
       - name: Report coverage
         if: always()
-        uses: davelosert/vitest-coverage-report-action@8b157684c6a6b259b97d45e72b44242865c0f6a5 # v2.12.2
+        uses: davelosert/vitest-coverage-report-action@c4bbc33a89b7ace0e63d35f1f7d4bcee31155a73 # v2.13.0
 
   build:
     name: Deploy Dry Run
@@ -119,7 +119,7 @@ jobs:
       # On push to main, base == HEAD and the diff scan would no-op.
       - name: Scan for secrets
         if: github.event_name == 'pull_request'
-        uses: trufflesecurity/trufflehog@6f3c981e7b77f235fd2702dd74af25fc4b72bf11 # v3.96.0
+        uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
