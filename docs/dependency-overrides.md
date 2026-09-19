@@ -42,7 +42,7 @@ flagged.
 
 ## Removal check (run on every dependency bump)
 
-When Dependabot opens its grouped bun update, or any time the parent packages move, test whether each
+When Renovate opens its grouped bun update, or any time the parent packages move, test whether each
 override still earns its place. From a clean working tree on the update branch:
 
 1. Delete the override you want to test from the `overrides` block in `package.json`.

@@ -1,0 +1,10 @@
+# Bun waits three days before resolving a newly published version, which is the
+# window a malicious release is usually pulled in. The value normally lives in
+# the maintainer's own ~/.bunfig.toml and stays out of the repository. It is
+# committed here because Renovate's weekly lock file maintenance runs
+# `bun install` inside a container that has no user-level config, and Renovate
+# cannot apply its own cooldown to that update type. Without this file a
+# transitive dependency published minutes ago would land in bun.lock there.
+# scripts/check-cooldown.ts asserts this value alongside the Renovate config.
+[install]
+minimumReleaseAge = 259200 # 3 days
