@@ -24,22 +24,22 @@
 		"prepare": "lefthook install"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-plugin": "1.1.10",
+		"@cloudflare/vitest-plugin": "1.1.13",
 		"@eslint/js": "^10.0.0",
 		"@types/bun": "1.4.2",
-		"@types/node": "26.6.1",
+		"@types/node": "26.6.2",
 		"@typescript/native": "npm:typescript@7.0.2",
 		"@vitest/coverage-istanbul": "4.1.11",
 		"comment-json": "5.0.0",
-		"eslint": "10.10.0",
+		"eslint": "10.11.0",
 		"eslint-config-prettier": "10.1.8",
 		"jiti": "^2.7.0",
 		"lefthook": "^2.1.14",
-		"prettier": "3.9.7",
+		"prettier": "3.9.8",
 		"typescript": "6.0.3",
 		"typescript-eslint": "8.70.0",
 		"vitest": "4.1.11",
-		"wrangler": "4.132.0"
+		"wrangler": "4.135.0"
 	},
 	"dependencies": {
 		"cloudflare": "7.1.0"

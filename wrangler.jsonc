@@ -6,7 +6,7 @@
 	// workerd refuses a date more than 7 days past its own release. From
 	// 2026-08-04 nodejs_compat and nodejs_compat_v2 are runtime defaults, so
 	// stating either one adds nothing; no_nodejs_compat is what turns them off.
-	"compatibility_date": "2026-09-15",
+	"compatibility_date": "2026-09-18",
 
 	// Set CUSTOM_DOMAIN to attach a custom domain; the deploy injects it as a
 	// custom_domain route. Otherwise the worker is served at its
