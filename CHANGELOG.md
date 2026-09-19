@@ -2,6 +2,21 @@
 
 # Changelog
 
+## [1.0.2](https://github.com/zachthedev/uddns/compare/v1.0.1...v1.0.2) (2026-09-19)
+
+
+### Bug Fixes
+
+* **deps:** move to bun 1.4 and the renamed vitest plugin ([613f576](https://github.com/zachthedev/uddns/commit/613f5760e84f55d0c7cb4794f833a994c18b0254)), closes [#198](https://github.com/zachthedev/uddns/issues/198)
+* **deps:** take the releases the publish cooldown held back ([8f40476](https://github.com/zachthedev/uddns/commit/8f40476891ecd289e801f6f1c235c536e40d511d)), closes [#198](https://github.com/zachthedev/uddns/issues/198)
+* keep the caller's ntfy topic out of the logs ([dbd7197](https://github.com/zachthedev/uddns/commit/dbd7197f81a23ed0a1c6183f33e6e3a18cd83864))
+* stop logging requests the rate limiter turns away ([16913a2](https://github.com/zachthedev/uddns/commit/16913a2f71602416dd89f6439bac2e687e5ff26a))
+
+
+### Build System
+
+* **deps:** typecheck with the native TypeScript 7 compiler ([387130f](https://github.com/zachthedev/uddns/commit/387130fbf44373edcdacc92507b9df6ddb02e7fc))
+
 ## [1.0.1](https://github.com/zachthedev/uddns/compare/v1.0.0...v1.0.1) (2026-08-11)
 
 
