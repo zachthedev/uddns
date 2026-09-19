@@ -235,7 +235,7 @@ describe('Worker fetch handler', () => {
 			const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
 			rateLimiterMock.limit.mockResolvedValue({ success: false });
 
-			// No Authorization header — if auth ran first it would return 401, not 429
+			// No Authorization header: if auth ran first it would return 401, not 429
 			const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com');
 
 			const response = await worker.fetch(request, env, ctx);
@@ -583,7 +583,7 @@ describe('Worker fetch handler', () => {
 
 			const response = await worker.fetch(request, env, ctx);
 
-			// Fails with 'No zones available' — gate passed and verify was called.
+			// Fails with 'No zones available', so the gate passed and verify was called.
 			expect(response.status).toBe(400);
 			expect(mockCloudflareClient.user.tokens.verify).toHaveBeenCalled();
 		});
@@ -618,7 +618,7 @@ describe('Worker fetch handler', () => {
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as any;
 			expect(body).toEqual({ success: false, error: 'Access denied.' });
-			// Gate fires before tokens.verify — Cloudflare should never be called for verify
+			// Gate fires before tokens.verify, so Cloudflare is never called for verify
 			expect(mockCloudflareClient.user.tokens.verify).not.toHaveBeenCalled();
 		});
 
@@ -1840,7 +1840,7 @@ describe('Worker fetch handler', () => {
 			const response = await worker.fetch(request, env, ctx);
 
 			expect(response.status).toBe(200);
-			// zones.list NOT called — served from cache
+			// zones.list NOT called: served from cache
 			expect(mockCloudflareClient.zones.list).not.toHaveBeenCalled();
 			// DNS record looked up with zone id from cache
 			expect(mockCloudflareClient.dns.records.list).toHaveBeenCalledWith(expect.objectContaining({ zone_id: 'zone-from-cache' }));
@@ -3513,7 +3513,7 @@ describe('Worker fetch handler', () => {
 				success: true,
 				data: { events: [{ hostname: 'test.example.com', outcome: 'updated' }] },
 			});
-			// token_id bound first, then limit (100) — no hostname in the middle
+			// token_id bound first, then limit (100), with no hostname in the middle
 			expect(stmtMock.bind).toHaveBeenCalledWith('token-id-123', 101);
 		});
 
