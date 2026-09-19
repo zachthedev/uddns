@@ -129,14 +129,13 @@ jobs:
             exit 1
           fi
 
-      # On push to main, base == HEAD and the diff scan would no-op.
+      # No base or head input: the action then scans the pull request's
+      # base..head commits, or a push's before..after. A branch name as base
+      # does not resolve in a pull request checkout, and the scan reads nothing.
       - name: Scan for secrets
-        if: github.event_name == 'pull_request'
         uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6 # v3.97.5
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
           # The action runs the scanner from a Docker image tagged with this
           # input, which defaults to latest. Pinning the SHA above fixes only
           # the action's own script, so the image is pinned here by digest.
