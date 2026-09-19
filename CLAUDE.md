@@ -11,6 +11,10 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
 - Verify everything: `bun run check:all`
 - Deploy (local or CI): `bun run deploy` (see scripts/deploy.ts)
 - First-time setup on a clone or fork: `bun run setup`
+- TypeScript: `bun run typecheck` runs the native 7.x compiler from the `@typescript/native` alias, called
+  by path because `typescript` also ships a `tsc`. `typescript` stays on 6.x for typescript-eslint, which
+  needs the 6.x compiler API. Dependabot skips `npm:` aliases, so bump `@typescript/native` by hand. Once
+  typescript-eslint's `typescript` peer range admits 7, move `typescript` to 7.x and drop the alias.
 - Dependency overrides: `package.json` carries no `overrides` block, and that is the state to return to.
   A `bun audit` failure is usually a stale lockfile, so re-resolve before pinning anything
   (see docs/dependency-overrides.md).
