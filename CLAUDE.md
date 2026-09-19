@@ -5,7 +5,7 @@ ntfy notifications, multi-zone tokens, a D1 audit trail, and a JSON API.
 Originally derived from willswire/unifi-ddns; now an independent project.
 
 Toolchain: bun (package manager and script runner), wrangler, vitest with
-the Cloudflare Workers pool, ESLint + prettier, lefthook hooks.
+the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
 
 - Install: `bun install`
 - Verify everything: `bun run check:all`
