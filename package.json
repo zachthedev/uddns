@@ -18,7 +18,7 @@
 		"lint:fix": "eslint . --fix",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tests/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
+		"typecheck": "bun node_modules/@typescript/native/bin/tsc --noEmit -p tsconfig.json && bun node_modules/@typescript/native/bin/tsc --noEmit -p tests/tsconfig.json && bun node_modules/@typescript/native/bin/tsc --noEmit -p scripts/tsconfig.json",
 		"check": "bun run typecheck && bun run lint && bun run format:check",
 		"check:all": "bun run check && bun run test:run",
 		"prepare": "lefthook install"
@@ -28,6 +28,7 @@
 		"@eslint/js": "^10.0.0",
 		"@types/bun": "1.4.2",
 		"@types/node": "26.6.1",
+		"@typescript/native": "npm:typescript@7.0.2",
 		"@vitest/coverage-istanbul": "4.1.11",
 		"comment-json": "5.0.0",
 		"eslint": "10.10.0",
