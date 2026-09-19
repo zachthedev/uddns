@@ -25,7 +25,7 @@ updates:
         patterns:
           - '*'
       # One combined weekly PR for all version bumps so interdependent
-      # packages (vitest + pool-workers + vite + wrangler) move together.
+      # packages (vitest + vitest-plugin + wrangler) move together.
       all-dependencies:
         applies-to: version-updates
         patterns:

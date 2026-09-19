@@ -171,6 +171,7 @@ export const createMockCtx = (): MockCtx => {
 	const ctx: ExecutionContext = {
 		waitUntil,
 		passThroughOnException,
+		abort: vi.fn(),
 		exports: {} as ExecutionContext['exports'],
 		tracing: {} as ExecutionContext['tracing'],
 		props: {},

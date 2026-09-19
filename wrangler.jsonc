@@ -2,8 +2,11 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "uddns",
 	"main": "src/index.ts",
-	"compatibility_date": "2026-06-01",
-	"compatibility_flags": ["nodejs_compat"],
+	// The release date of the workerd that wrangler and the vitest plugin share.
+	// workerd refuses a date more than 7 days past its own release. From
+	// 2026-08-04 nodejs_compat and nodejs_compat_v2 are runtime defaults, so
+	// stating either one adds nothing; no_nodejs_compat is what turns them off.
+	"compatibility_date": "2026-09-15",
 
 	// Set CUSTOM_DOMAIN to attach a custom domain; the deploy injects it as a
 	// custom_domain route. Otherwise the worker is served at its
