@@ -151,7 +151,7 @@ describe('Worker fetch handler', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Request logging  (the console.log at the top of fetch)
+	// Request logging  (the console.log right after the rate limiter)
 	// -------------------------------------------------------------------------
 
 	describe('Request logging', () => {
@@ -242,6 +242,21 @@ describe('Worker fetch handler', () => {
 
 			expect(response.status).toBe(429);
 			expect(mockCloudflareClient.user.tokens.verify).not.toHaveBeenCalled();
+		});
+
+		it('writes no request log line when rate limited', async () => {
+			// Invocation logs are off, so this line is the only thing a request
+			// could write. A flood the limiter turns away must not buy one each.
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
+			rateLimiterMock.limit.mockResolvedValue({ success: false });
+
+			const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com');
+
+			const response = await worker.fetch(request, env, ctx);
+
+			expect(response.status).toBe(429);
+			expect(logSpy).not.toHaveBeenCalledWith('Incoming request:', expect.anything());
 		});
 
 		it('uses the CF-Connecting-IP header as the rate limit key', async () => {

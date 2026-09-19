@@ -80,6 +80,12 @@
 		// thing guarding who can read its notifications, alongside the zone and
 		// hostnames it manages. Redaction keeps all of it out of logs and traces.
 		"redact_query_string": true,
+		// No per-request invocation log. The handler logs every request the rate
+		// limiter admits and the outcome of each, so a flood it turns away writes
+		// no line at all.
+		"logs": {
+			"invocation_logs": false,
+		},
 	},
 
 	// Deliberately NO smart placement: the hot path (gated cache hit) is
