@@ -56,6 +56,8 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
 - CI splits the gate so the tests run once per pull request: the `Gate` job runs `check` and the
   `Test & Coverage` job runs `test:coverage`. `deploy.yml` and `release-please.yml` run `check:all`, because
   a manual deploy takes any ref, and a tag and a GitHub Release cannot be withdrawn once published.
+- The lefthook `pre-push` hook runs `check`, the same script as the `Gate` job, and refuses the push when
+  it fails. `lefthook.yml` says why the tests stay out of it.
 - Checks that run in CI and not in the gate, each with the reason it sits outside. A working machine
   cannot run these. The secret scan needs the trufflehog action and the pull request's base and head
   commits. The coverage comment needs `pull-requests: write` against an open pull request. The

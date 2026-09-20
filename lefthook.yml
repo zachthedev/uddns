@@ -1,13 +1,13 @@
 # Git hooks, installed by `lefthook install` (runs automatically via the
 # package.json prepare script on bun install).
 #
-# Every job runs its tool from node_modules by path, so the version that runs is
-# the one package.json pins. A resolver that falls back to the registry would
-# fetch an unpinned release at commit time, and git resolves hooks through the
-# common directory, so these run in linked worktrees where a package may not be
-# installed at all. Each path is the package's JavaScript entry point run under
-# bun, because node_modules/.bin holds only .exe and .bunx shims on Windows and
-# a bare node_modules/.bin/<tool> does not resolve there.
+# Every commit job runs its tool from node_modules by path, so the version that
+# runs is the one package.json pins. A resolver that falls back to the registry
+# would fetch an unpinned release at commit time, and git resolves hooks through
+# the common directory, so these run in linked worktrees where a package may not
+# be installed at all. Each path is the package's JavaScript entry point run
+# under bun, because node_modules/.bin holds only .exe and .bunx shims on Windows
+# and a bare node_modules/.bin/<tool> does not resolve there.
 
 pre-commit:
   jobs:
@@ -34,3 +34,14 @@ commit-msg:
     # .github/commit-scopes.json, both by way of commitlint.config.js.
     - name: commitlint
       run: bun node_modules/@commitlint/cli/cli.js --edit {1}
+
+pre-push:
+  jobs:
+    # One script call, so the gate's legs live only in package.json. `check` is
+    # the script the CI Gate job runs. The tests stay out of this hook: the
+    # Durable Object and D1 suites fail under a long TEMP path on Windows, and a
+    # hook that cannot pass on a maintainer's machine gets bypassed, which guards
+    # nothing. CI runs the tests on every pull request. The gate runs over the
+    # working tree, so uncommitted edits count toward the result.
+    - name: check
+      run: bun run check
