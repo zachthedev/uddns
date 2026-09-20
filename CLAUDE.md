@@ -91,11 +91,15 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   Adding a scope is one edit to the JSON.
 - Generated types: `bun run cf-typegen` passes `--env-file .dev.vars.template`, so the committed
   `worker-configuration.d.ts` carries the template's secret names rather than whichever ones a contributor
-  keeps in their own gitignored `.dev.vars`. `cf-typegen:check` regenerates the file and then runs
-  `git diff --exit-code` against it, so it compares bytes against the index rather than trusting the
-  file's own header. wrangler's `--check` flag trusts that header, which the file's author controls, and
-  never reads the body, so it is not used. A failure means the staged or committed file is stale: stage
-  the regenerated one and run again.
+  keeps in their own gitignored `.dev.vars`. `cf-typegen:check` deletes the file, regenerates the whole of
+  it, and then runs `git diff --exit-code` against it, so it compares bytes against the index rather than
+  trusting the file's own header. wrangler carries the runtime half forward from an existing file
+  whenever its `// Runtime types generated with workerd@` line matches. A regeneration over the existing
+  file therefore re-reads the file under test, which the deletion prevents. wrangler's `--check` flag
+  trusts the file's header lines, which the file's author controls, and never reads the body, so it is
+  not used. A failure means the staged or committed file is stale: stage the regenerated one and run
+  again. If wrangler itself fails, the file is absent until `git checkout -- worker-configuration.d.ts`
+  restores it.
 - Deploy (local or CI): `bun run deploy` (see scripts/deploy.ts)
 - First-time setup on a clone or fork: `bun run setup`
 - TypeScript: `bun run typecheck` runs the native 7.x compiler from the `@typescript/native` alias, called
