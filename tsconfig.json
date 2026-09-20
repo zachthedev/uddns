@@ -1,23 +1,23 @@
 {
-	"compilerOptions": {
-		"target": "es2024",
-		"lib": ["es2024"],
-		"module": "es2022",
-		"moduleResolution": "bundler",
-		"noEmit": true,
-		"isolatedModules": true,
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "isolatedModules": true,
 
-		"strict": true,
-		"noUnusedLocals": true,
-		"noUnusedParameters": true,
-		"noImplicitReturns": true,
-		"noFallthroughCasesInSwitch": true,
-		"noUncheckedIndexedAccess": true,
-		"noImplicitOverride": true,
-		"noPropertyAccessFromIndexSignature": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
 
-		"skipLibCheck": true
-	},
-	"include": ["worker-configuration.d.ts", "src/**/*.ts"],
-	"exclude": ["node_modules", "dist", ".wrangler"]
+    "skipLibCheck": true
+  },
+  "include": ["worker-configuration.d.ts", "src/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".wrangler"]
 }

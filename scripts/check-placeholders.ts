@@ -15,12 +15,12 @@ const content: string = await Bun.file(CONFIG_PATHS.source).text();
 const matches = [...(content.match(HEX_ID_PATTERN) ?? []), ...(content.match(UUID_PATTERN) ?? [])];
 
 if (matches.length > 0) {
-	console.error(`${basename(CONFIG_PATHS.source)} contains what looks like real Cloudflare IDs:`);
-	for (const match of matches) {
-		console.error(`  ${match.slice(0, 8)}…`);
-	}
-	console.error('Replace them with placeholders; real IDs belong in .env.local and GitHub secrets.');
-	process.exit(1);
+  console.error(`${basename(CONFIG_PATHS.source)} contains what looks like real Cloudflare IDs:`);
+  for (const match of matches) {
+    console.error(`  ${match.slice(0, 8)}…`);
+  }
+  console.error('Replace them with placeholders; real IDs belong in .env.local and GitHub secrets.');
+  process.exit(1);
 }
 
 console.log(`${basename(CONFIG_PATHS.source)} is clean (placeholders only).`);
