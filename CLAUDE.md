@@ -73,10 +73,11 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   a pull request's base..head range and then the composed squash subject `<title> (#<number>)`, which is
   what lands on main under a squash merge, so a pull request title is effectively capped at 65
   characters. The rules are in `commitlint.config.js`: config-conventional's types, scopes from
-  `.github/commit-scopes.json`, header and body lines at 72. That JSON file is the one place the scope
-  vocabulary is written; `CONTRIBUTING.md` restates it as a table inside a `commit-scopes` region, and
-  `tests/commit-scopes.node.test.ts` holds the JSON, the rule commitlint loads and the table to one list.
-  Adding a scope means the JSON and the table, and the test names whichever one was missed.
+  `.github/commit-scopes.json`, header and body lines at 72. That JSON file is the only copy of the scope
+  vocabulary, an array of `{ scope, covers }` entries. `CONTRIBUTING.md` points at it by path rather than
+  restating it, and `tests/commit-scopes.node.test.ts` binds the JSON to the rule commitlint loads, checks
+  every entry carries a scope and what it covers, and fails any document that lists the scopes again.
+  Adding a scope is one edit to the JSON.
 - Generated types: `bun run cf-typegen` passes `--env-file .dev.vars.template`, so the committed
   `worker-configuration.d.ts` carries the template's secret names rather than whichever ones a contributor
   keeps in their own gitignored `.dev.vars`. `cf-typegen:check` regenerates the file and then runs
