@@ -11,35 +11,22 @@ permissions:
 # request tags the commit, publishes the Release, and calls this. Manual runs
 # take a ref, which covers deploying a revision without releasing one.
 on:
-  # Named one by one rather than inherited, so a secret added to the repo later
-  # does not reach a job that runs install hooks and a build. Optional here
-  # means scripts/deploy.ts has a defined behaviour without it: the preview
-  # namespace falls back to the production one, a missing domain leaves the
-  # route alone, and a missing access key skips the secret sync.
+  # Takes no inputs and no secrets. Everything the deploy reads lives on the
+  # production environment the job below declares, and an environment's
+  # secrets and variables reach a called job through that declaration alone.
+  # So the caller passes nothing, and a repository secret added later stays
+  # out of the called job, which runs install hooks and a build.
   workflow_call:
-    secrets:
-      CLOUDFLARE_API_TOKEN:
-        required: true
-      CLOUDFLARE_ACCOUNT_ID:
-        required: true
-      KV_NAMESPACE_ID:
-        required: true
-      D1_DATABASE_ID:
-        required: true
-      KV_NAMESPACE_PREVIEW_ID:
-        required: false
-      CUSTOM_DOMAIN:
-        required: false
-      ACCESS_KEY:
-        required: false
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Named so the deploy shows up as a deployment and can carry protection
-    # rules. Both paths into production run through here.
+    # Named so the deploy shows up as a deployment, carries protection rules,
+    # and holds the values the deploy reads: identifiers as variables, the two
+    # access-granting values as secrets. Both paths into production run
+    # through here.
     environment: production
     # On the job rather than the workflow, so it holds when this runs as a
     # called workflow too. The deploy applies D1 migrations, which read the
@@ -76,13 +63,19 @@ jobs:
       # wrangler.deploy.jsonc with the resource IDs, applies D1 migrations,
       # deploys, and syncs the optional ACCESS_KEY worker secret. Local
       # deploys run the same script.
+      #
+      # Only the two values that grant access are secrets. The five identifiers
+      # are environment variables, so they stay readable in the run log rather
+      # than masked, and an unset one arrives as an empty string. CUSTOM_DOMAIN
+      # and ACCESS_KEY are optional: an empty domain leaves the route alone and
+      # an empty access key skips the secret sync.
       - name: Deploy Worker
         run: bun run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
-          KV_NAMESPACE_PREVIEW_ID: ${{ secrets.KV_NAMESPACE_PREVIEW_ID }}
-          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-          CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          KV_NAMESPACE_PREVIEW_ID: ${{ vars.KV_NAMESPACE_PREVIEW_ID }}
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+          CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
           ACCESS_KEY: ${{ secrets.ACCESS_KEY }}

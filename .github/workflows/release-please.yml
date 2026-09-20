@@ -102,13 +102,7 @@ jobs:
     if: needs.release.outputs.released == 'true'
     # deploy.yml answers to workflow_call and workflow_dispatch alone, so the
     # release tag reaches it only through this call. One deploy definition,
-    # rather than a second copy of the steps behind a tag trigger.
+    # rather than a second copy of the steps behind a tag trigger. Nothing is
+    # passed: the called job declares the production environment, which holds
+    # every value the deploy reads.
     uses: ./.github/workflows/deploy.yml
-    secrets:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
-      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-      KV_NAMESPACE_PREVIEW_ID: ${{ secrets.KV_NAMESPACE_PREVIEW_ID }}
-      CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
-      ACCESS_KEY: ${{ secrets.ACCESS_KEY }}
