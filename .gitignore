@@ -149,3 +149,5 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+# Overrides of the template above. They sit below it because the last matching pattern wins.
+!.env.local.template
