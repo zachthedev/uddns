@@ -45,26 +45,9 @@ The type is one of those `@commitlint/config-conventional` accepts: `feat`, `fix
 only `feat` and `fix`; the rest are the Angular convention that preset encodes. Release notes come from
 the type, so pick the one that says what the change does to a user rather than how it was made.
 
-The scope is optional. A change that belongs to no single area names none. When present it is one of
-these, and the list below is checked against the one commitlint enforces:
-
-<!-- commit-scopes:start -->
-
-| Scope      | Covers                                                                             |
-| ---------- | ---------------------------------------------------------------------------------- |
-| `audit`    | The D1 audit trail: what is recorded and how batches are written                   |
-| `deps`     | Dependency updates, which Renovate opens under this scope                          |
-| `deps-dev` | Development-only dependency updates. Historical: Renovate files everything as deps |
-| `history`  | The history endpoint that reads the audit trail back out                           |
-| `main`     | release-please's own release commits. Not for hand-written changes                 |
-| `refusals` | The Durable Object that counts hostnames a token reaches for past its authority    |
-| `release`  | Release tooling and the release workflow                                           |
-| `security` | Authentication, secret handling and CI hardening                                   |
-
-<!-- commit-scopes:end -->
-
-To add a scope, add it to `.github/commit-scopes.json` and to this table. A test holds the two
-together.
+The scope is optional. A change that belongs to no single area names none. `.github/commit-scopes.json`
+lists each scope and what it covers, and commitlint accepts no other. Omit the scope rather than invent
+one. A new area earns a scope in that file, in the change that adds the area.
 
 The header and every body line stay within 72 characters. A squash merge lands the pull request title
 as the commit subject with ` (#NNN)` appended, and CI lints that composed subject, so keep the title

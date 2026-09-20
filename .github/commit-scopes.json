@@ -1,3 +1,13 @@
-{
-  "scopes": ["audit", "deps", "deps-dev", "history", "main", "refusals", "release", "security"]
-}
+[
+  { "scope": "audit", "covers": "The D1 audit trail: what is recorded and how batches are written" },
+  { "scope": "deps", "covers": "Dependency updates, which Renovate opens under this scope" },
+  {
+    "scope": "deps-dev",
+    "covers": "Development-only dependency updates. Historical: Renovate files everything as deps"
+  },
+  { "scope": "history", "covers": "The history endpoint that reads the audit trail back out" },
+  { "scope": "main", "covers": "release-please's own release commits. Not for hand-written changes" },
+  { "scope": "refusals", "covers": "The Durable Object that counts hostnames a token reaches for past its authority" },
+  { "scope": "release", "covers": "Release tooling and the release workflow" },
+  { "scope": "security", "covers": "Authentication, secret handling and CI hardening" }
+]
