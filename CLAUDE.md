@@ -22,8 +22,19 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   reproducibility, which is about output bytes; an advisory check does not change the bytes, it changes
   whether the run completes. Named exceptions sit in the types leg: wrangler reads
   `CLOUDFLARE_INCLUDE_PROCESS_ENV` and `CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV` from the environment, and
-  either one set away from its default changes what it generates. Neither is set by default. Do not set
-  either when running the gate.
+  either one set away from its default changes what it generates. `CLOUDFLARE_INCLUDE_PROCESS_ENV=true`
+  copies the whole shell environment into `Env`. `CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false` makes
+  wrangler ignore the explicit `--env-file` flag, which the name does not say, so the template's secrets
+  drop out of `Env`. Both run in one direction: either turns a green `cf-typegen:check` red, and neither
+  can turn a red one green, because they add or remove secret-shaped members while a stale file differs
+  by a binding. Neither is set by default. Do not set either when running the gate. The git half of that
+  leg passes `--no-ext-diff`, so a `diff.external` seeded through `GIT_CONFIG_COUNT` cannot answer for it.
+  Three loader-injection variables can hide a failure, and they are documented rather than refused:
+  `BUN_OPTIONS=--preload=<file>` runs code inside every leg bun runs,
+  `NODE_OPTIONS=--require=<file>` does the same inside wrangler, prettier and eslint, and `JITI_ALIAS`
+  swaps what `eslint.config.ts` imports. Each needs a file on disk and the intent to use it, and the
+  environment that carries them also carries `PATH`. A gate that refused them would produce a message
+  rather than safety, and would refuse the harmless `NODE_OPTIONS=--max-old-space-size` with them.
 - `bun run audit` is exactly the kind of check that is not hermetic, so it runs on pull requests and on
   pushes to main through `ci.yml`, daily through `dependency-audit.yml`, and never on the deploy path.
   Blocking a deploy would not remove the vulnerable code: uddns is a deployed service, so production keeps

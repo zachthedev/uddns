@@ -43,5 +43,12 @@ jobs:
         with:
           bun-version-file: package.json
 
+      # The audit's verdict is a claim about an external database, and a clean
+      # verdict names no endpoint. bun audit has no --registry flag, and this
+      # variable outranks a project bunfig.toml and a .env, so setting it on
+      # the step fixes the endpoint against the environment, a bunfig and a
+      # dotenv at once.
       - name: Audit dependencies
+        env:
+          BUN_CONFIG_REGISTRY: https://registry.npmjs.org/
         run: bun run audit
