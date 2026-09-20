@@ -39,7 +39,7 @@
 		},
 		{
 			"customType": "regex",
-			"description": "The Renovate image this repository's own workflow runs. The lookup is Docker Hub, which returns a release timestamp; ghcr.io does not, and both registries publish the same manifest digest.",
+			"description": "The Renovate image this repository's own workflow runs. The lookup is Docker Hub, because Renovate's docker datasource reads a release timestamp only from there. Setting minimumReleaseAgeBehaviour to timestamp-required then holds back any candidate whose timestamp it cannot establish. Both registries publish the same manifest digest, so the pin is the same either way.",
 			"managerFilePatterns": ["/^\\.github/workflows/dependency-updates\\.yml$/"],
 			"matchStrings": ["renovate-version: (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"],
 			"depNameTemplate": "renovate/renovate",

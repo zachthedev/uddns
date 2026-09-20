@@ -68,6 +68,7 @@ these repository secrets:
 - `KV_NAMESPACE_ID` - Production namespace ID (from `.env.local`)
 - `KV_NAMESPACE_PREVIEW_ID` - Preview namespace ID (from `.env.local`)
 - `D1_DATABASE_ID` - Audit database ID (from `.env.local`)
+- `CUSTOM_DOMAIN` - Optional; attaches the worker to this domain instead of leaving it on its `*.workers.dev` URL
 - `ACCESS_KEY` - Optional; locks the worker to callers that present it
 
 Releases then deploy, and pushes do not. Deploys apply the D1 migrations, so
@@ -90,6 +91,16 @@ Every other type that appears in the changelog gives a patch: `fix`, `perf`,
 `refactor`, `docs`, `build`, and `revert`. The types kept out of the changelog
 (`chore`, `ci`, `test`, `style`) release nothing at all, so a `main` carrying
 only those has no release pull request open.
+
+Hiding a type in `release-please-config.json` is what does that. release-please
+renders the changelog body first, and opens no release pull request when it
+comes out empty. So hiding decides releasability, not presentation.
+
+`.github/renovate.json` steers by that switch when it picks a commit type. A
+runtime dependency and the weekly lock refresh land as `fix` and ship. A
+development dependency, a wrangler bump and an action bump land as `chore` or
+`ci` and do not. Unhiding one of those types would put its commits back in the
+body, so each would cut a release and deploy.
 
 Use the Deploy workflow's manual run to deploy a revision without releasing one.
 
