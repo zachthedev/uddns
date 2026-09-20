@@ -10,7 +10,7 @@
     "deploy": "bun scripts/deploy.ts",
     "setup": "bun scripts/setup.ts",
     "cf-typegen": "wrangler types --env-file .dev.vars.template",
-    "cf-typegen:check": "bun run cf-typegen && git diff --exit-code -- worker-configuration.d.ts",
+    "cf-typegen:check": "bun run cf-typegen && git diff --no-ext-diff --exit-code -- worker-configuration.d.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
