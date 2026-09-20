@@ -22,9 +22,8 @@ concurrency:
 jobs:
   # Ahead of the release, not after it. A tag and a GitHub Release cannot be
   # withdrawn once published, so the only useful place for the gate is before
-  # they exist. This also covers the release pull request itself: it is opened
-  # by GITHUB_TOKEN, and GitHub starts no workflow run for such a pull request,
-  # so the merge commit reaches here having never been checked.
+  # they exist. The release pull request carries checks of its own, because the
+  # app token below is what opens it, so this covers the push to main itself.
   verify:
     name: Verify
     runs-on: ubuntu-latest
@@ -52,20 +51,48 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
-      # Labels live on the issues API, and release-please marks its own pull
-      # request with `autorelease:` labels to track which release it describes.
-      issues: write
+    # Every credential this job uses comes from the app, so the job token gets
+    # nothing.
+    permissions: {}
+    # Holds the releaser app's credentials and admits main alone, through a
+    # deployment branch policy naming main. No reviewer: an approval here would
+    # stall every release. deployment: false, because this is a credential
+    # scope rather than a deployment target, and a record for every push to
+    # main would bury the ones deploy.yml writes against production.
+    environment:
+      name: release-pr
+      deployment: false
     outputs:
       released: ${{ steps.release-please.outputs.release_created }}
 
     steps:
+      # A pull request opened by GITHUB_TOKEN has its CI run held at
+      # action_required with no jobs, so no check reaches the release commit
+      # until somebody approves it by hand. The app is a distinct actor, so its
+      # pull request starts a run the moment it is opened.
+      #
+      # Narrowed with permission-* inputs. Without one the token inherits every
+      # permission the installation holds, which is the whole app rather than
+      # the two scopes release-please works through.
+      - name: Mint app token
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASER_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASER_PRIVATE_KEY }}
+          # The release branch and its commits, and the tag and the GitHub
+          # Release that merging the pull request produces.
+          permission-contents: write
+          # The release pull request itself, and the `autorelease:` labels
+          # release-please tracks it with. Labels on a pull request fall under
+          # this permission, not under issues.
+          permission-pull-requests: write
+
       - name: Run release-please
         id: release-please
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ steps.token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -73,10 +100,9 @@ jobs:
     name: Deploy
     needs: release
     if: needs.release.outputs.released == 'true'
-    # A tag pushed by GITHUB_TOKEN starts no workflow run, which is GitHub's
-    # guard against a workflow triggering itself. The release tag therefore
-    # cannot reach deploy.yml through a trigger of its own, so this calls it.
-    # One deploy definition either way, rather than a second copy of the steps.
+    # deploy.yml answers to workflow_call and workflow_dispatch alone, so the
+    # release tag reaches it only through this call. One deploy definition,
+    # rather than a second copy of the steps behind a tag trigger.
     uses: ./.github/workflows/deploy.yml
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

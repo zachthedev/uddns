@@ -17,14 +17,11 @@ jobs:
   commits:
     name: Commit Messages
     runs-on: ubuntu-latest
-    # release-please carries the generated changelog as its commit body, whose
-    # markdown lines run well past the width every other commit here holds to.
-    # The author is half the match because a branch name is chosen by whoever
-    # opens the pull request, a fork included, and this job is meant to become a
-    # required check.
-    if: >-
-      github.event_name == 'pull_request' && !(github.event.pull_request.user.login == 'github-actions[bot]' &&
-      startsWith(github.head_ref, 'release-please--'))
+    # Every step below reads `github.event.pull_request`, which a push to main
+    # does not carry. No author is excused: a release commit is a one-line
+    # `chore(main): release x.y.z`, and the changelog goes to CHANGELOG.md and
+    # the pull request body, neither of which commitlint reads.
+    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout repository

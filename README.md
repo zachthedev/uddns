@@ -113,12 +113,19 @@ all.
 
 Use the Deploy workflow's manual run to deploy a revision without releasing one.
 
-These mechanics are worth knowing. The release tag is created by the workflow's
-own token, and GitHub starts no workflow run from one, which is why the Release
-workflow calls the deploy directly instead of leaving it on a tag trigger, and
-why a tag pushed by hand deploys nothing. For the same reason the release pull
-request itself gets no CI run, so `bun run check:all` runs against the merge
-commit before anything is tagged.
+These mechanics are worth knowing. The release pull request is opened by the
+`zachthedev-releaser` app, so it gets the same checks as every other pull
+request. That is what the app is for: GitHub holds the CI run for a pull
+request opened by `GITHUB_TOKEN` at `action_required` with no jobs, until
+somebody approves it by hand. No check is waived for it, commit message linting
+included: a release commit is a one-line `chore(main): release x.y.z`, and the
+changelog goes to `CHANGELOG.md` and the pull request body. The Release workflow
+also runs `bun run check:all` against the push to main, ahead of the tag and the
+GitHub Release, neither of which can be withdrawn once published.
+
+The Deploy workflow answers to a call and a manual run, with no tag trigger, so
+the Release workflow calls it directly and a tag pushed by hand deploys
+nothing.
 
 Notifications need no deployment configuration: callers pass their own ntfy
 target with the `ntfy=` query parameter.
