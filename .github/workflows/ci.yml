@@ -13,12 +13,14 @@ on:
 
 jobs:
   checks:
-    name: Lint, Format & Types
+    name: Gate
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -30,28 +32,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Check code formatting
-        run: bun run format:check
-
-      - name: Run ESLint
-        run: bun run lint
-
-      - name: TypeScript type checking
-        run: bun run typecheck
-
-      # wrangler types includes secret names from .dev.vars; materialize it
-      # from the committed template so typegen is deterministic everywhere.
-      - name: Check generated types are current
-        run: |
-          cp .dev.vars.template .dev.vars
-          bun run cf-typegen
-          git diff --exit-code worker-configuration.d.ts
-
-      - name: Check committed config is clean
-        run: bun scripts/check-placeholders.ts
-
-      - name: Check the dependency cooldown
-        run: bun scripts/check-cooldown.ts
+      # The gate a contributor runs locally, called rather than restated, so
+      # the two cannot drift. A check belongs in the check script, not here.
+      # The test job owns the test leg, which is why this calls check rather
+      # than check:all.
+      - name: Verify
+        run: bun run check
 
   test:
     name: Test & Coverage
@@ -63,6 +49,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -75,6 +63,9 @@ jobs:
       - name: Run tests with coverage
         run: bun run test:coverage
 
+      # Posting the summary needs pull-requests: write against an open pull
+      # request, which is why the coverage run sits here rather than in the
+      # gate.
       - name: Report coverage
         if: always()
         uses: davelosert/vitest-coverage-report-action@c4bbc33a89b7ace0e63d35f1f7d4bcee31155a73 # v2.13.0
@@ -86,6 +77,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -107,23 +100,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
+      # bun audit reads bun.lock, so this job needs bun but not an install.
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
+      # An advisory is a function of the world rather than of the tree, so it
+      # cannot sit in the gate. A pull request is where blocking is right: the
+      # fix is a version bump and the author is here to make it.
       - name: Audit dependencies
-        run: bun audit --audit-level=high
+        run: bun run audit
 
       # Renovate moves the action and this image together, and reads the digest
-      # from Docker Hub, because ghcr.io returns no release timestamp and the
-      # cooldown would hold a ghcr.io lookup forever. This asserts that ghcr.io,
-      # which is what the action pulls, publishes that same digest for the
-      # action's release.
+      # from Docker Hub, because its docker datasource reads a release timestamp
+      # only from there. With minimumReleaseAgeBehaviour set to
+      # timestamp-required, a ghcr.io lookup has no timestamp to clear the
+      # cooldown with and would never move. This asserts that ghcr.io, which is
+      # what the action pulls, publishes that same digest for the action's
+      # release.
       - name: Check the scanner image matches the action release
         run: |
           release=$(sed -nE 's|.*trufflesecurity/trufflehog@[0-9a-f]{40} # v([0-9.]+)$|\1|p' .github/workflows/ci.yml)
