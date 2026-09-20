@@ -1,0 +1,20 @@
+# The form covers the report that has a shape, and every other kind of
+# conversation has a discussion category. An issue here is therefore always a
+# defect, which is what keeps the tracker readable. A report with no request
+# and no response cannot be acted on, which is what the bug form asks for.
+blank_issues_enabled: false
+contact_links:
+  - name: The FAQ
+    url: https://github.com/zachthedev/uddns/blob/main/docs/faq.md
+    about: The setup mistakes, each with its fix. Read it before opening anything below.
+  - name: A question about setting up a device or the worker
+    url: https://github.com/zachthedev/uddns/discussions/categories/q-a
+    about: >
+      The Server field, the token scopes, the access key, a deployment that does not come up, or anything
+      the FAQ does not answer.
+  - name: An idea
+    url: https://github.com/zachthedev/uddns/discussions/categories/ideas
+    about: Propose it here first. It becomes an issue once its shape is settled.
+  - name: A security problem
+    url: https://github.com/zachthedev/uddns/security/policy
+    about: Report it privately. An issue is public the moment it is opened.

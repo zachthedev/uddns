@@ -1,0 +1,87 @@
+name: Bug
+description: The worker does something other than what it documents.
+title: 'bug: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The FAQ in `docs/faq.md` covers the setup mistakes, and a question about configuring a device
+        belongs in Discussions. This form is for the worker answering something other than what the README
+        says it answers.
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What the worker did, and what it was supposed to do instead.
+    validations:
+      required: true
+  - type: textarea
+    id: request
+    attributes:
+      label: The request
+      description: >
+        A `curl` line or the UniFi Server field, with the token and the access key removed. Keep the
+        `hostnames`, `ip4`, `ip6`, `zone` and `ntfy` parameters as sent, with your own hostnames in them.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: response
+    attributes:
+      label: The response
+      description: >
+        The status code and the JSON body. `curl -i` prints both. A failed batch names every record under
+        `data.failed`, so paste the whole body rather than the first line.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: uddns version
+      description: The release you deployed, or the commit sha for a deployment from a branch.
+      placeholder: '1.0.2, or 6f9be1d'
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How it is deployed
+      options:
+        - The deploy button
+        - bun run deploy from a clone
+        - GitHub Actions from a fork
+        - wrangler dev on my machine
+        - A deployment somebody else runs
+    validations:
+      required: true
+  - type: dropdown
+    id: access_key
+    attributes:
+      label: Is ACCESS_KEY set on the deployment?
+      description: It decides which gate a request meets first. Pick "Not sure" rather than guessing.
+      options:
+        - 'Yes'
+        - 'No'
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: UniFi device and version
+      description: >
+        The gateway model and the UniFi OS and Network Application versions, when a device sends the
+        request. Write none for a direct caller.
+      placeholder: 'UDM Pro, UniFi OS 4.2.12, Network 9.3.45'
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Worker logs
+      description: >
+        The lines Workers Logs holds for the request, when the deployment is yours. The query string is
+        already redacted there. Remove the token id when you would rather not publish it.
+      render: text
