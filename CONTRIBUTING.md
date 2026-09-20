@@ -6,8 +6,9 @@
 bun install
 ```
 
-That installs the dependencies and the git hooks. The hooks run the same tools the gate runs, on the
-files you stage, and check every commit message before it is recorded.
+That installs the dependencies and the git hooks. The commit hooks run the same tools the gate runs, on
+the files you stage, and check every commit message before it is recorded. The push hook runs
+`bun run check` over the whole tree and refuses the push when it fails.
 
 ## The gate
 
@@ -17,7 +18,10 @@ bun run check:all
 
 One command, and it is the whole gate. CI runs the same checks, split across the `Gate` job for
 `bun run check` and the `Test & Coverage` job for `bun run test:coverage`, so a green run on your
-machine is a green run there. Run it before you push. `bun run test:watch` reruns the suite as you edit.
+machine is a green run there. Run it before you push. The push hook runs the `bun run check` half on its
+own. The tests are the half it leaves to you and to CI, because of the Windows temp path issue below: a
+hook that cannot pass on a maintainer's machine gets bypassed, and a bypassed hook guards nothing.
+`bun run test:watch` reruns the suite as you edit.
 
 A few checks run only in CI. `CLAUDE.md` lists them and says why each one sits outside the gate.
 
