@@ -60,15 +60,21 @@ Requires [bun](https://bun.sh).
 
 #### **Option 3: Deploy on every release with GitHub Actions**
 
-Fork this repository, run setup locally once (Option 2, steps 1 to 3), then add
-these repository secrets:
+Fork this repository, run setup locally once (Option 2, steps 1 to 3), then
+create an environment named `production` under the fork's Settings. The deploy
+job declares that environment and reads everything from it. Identifiers are
+variables and only the values that grant access are secrets, so the
+identifiers stay readable in the run log. Add these environment variables:
 
-- `CLOUDFLARE_API_TOKEN` - API token with Workers Scripts, Workers KV, and D1 edit permissions
 - `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
 - `KV_NAMESPACE_ID` - Production namespace ID (from `.env.local`)
 - `KV_NAMESPACE_PREVIEW_ID` - Preview namespace ID (from `.env.local`)
 - `D1_DATABASE_ID` - Audit database ID (from `.env.local`)
 - `CUSTOM_DOMAIN` - Optional; attaches the worker to this domain instead of leaving it on its `*.workers.dev` URL
+
+And these environment secrets:
+
+- `CLOUDFLARE_API_TOKEN` - API token with Workers Scripts, Workers KV, and D1 edit permissions
 - `ACCESS_KEY` - Optional; locks the worker to callers that present it
 
 Releases then deploy, and pushes do not. Deploys apply the D1 migrations, so

@@ -5,10 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * README.md restates facts that are defined elsewhere: the changelog sections
- * release-please publishes, the ones it keeps back, the secrets deploy.yml
- * declares, and the major version the project is on. Each one is read here from
- * the file that owns it, so a name added on one side and not the other fails a
- * check rather than sitting wrong in the documentation.
+ * release-please publishes, the ones it keeps back, the environment variables
+ * and secrets deploy.yml reads, and the major version the project is on. Each
+ * one is read here from the file that owns it, so a name added on one side and
+ * not the other fails a check rather than sitting wrong in the documentation.
  *
  * The real files are read rather than fixtures. A fixture would be a third copy
  * of each list, and a third copy drifts the way the second one does.
@@ -102,14 +102,27 @@ const releasedMajor = ((): string => {
 })();
 
 /**
- * The secret names deploy.yml accepts, matched by shape rather than parsed: the
- * repository carries no YAML dependency, and workflow_call's secrets block is a
+ * The env block of deploy.yml's Deploy Worker step, matched by shape rather
+ * than parsed: the repository carries no YAML dependency, and the block is a
  * flat map of names at one fixed depth.
  */
-const declaredSecrets = allOf(
-  capture(deployWorkflow, /\n {4}secrets:\n([\s\S]*?)\n {2}\S/, 'the workflow_call secrets block in deploy.yml'),
-  /^ {6}([A-Z0-9_]+):$/gm,
+const deployStepEnv = capture(
+  deployWorkflow,
+  /\n {6}- name: Deploy Worker\n(?: {8}\S.*\n)*? {8}env:\n((?: {10}\S.*(?:\n|$))+)/,
+  'the env block of the Deploy Worker step in deploy.yml',
 );
+
+/**
+ * The names the Deploy Worker step reads from one context, each keyed by the
+ * same name it is read as. The environment holds them under that name, so it
+ * is the name a fork owner has to create, and the README is bound to it.
+ */
+const readFrom = (context: 'vars' | 'secrets'): string[] =>
+  allOf(deployStepEnv, new RegExp(String.raw`^ {10}([A-Z0-9_]+): \$\{\{ ${context}\.\1 \}\}$`, 'gm'));
+
+/** A README list introduced by `lead`, as the backticked names that open its items. */
+const readmeList = (lead: string, what: string): string[] =>
+  allOf(capture(readme, new RegExp(String.raw`${lead}\n\n([\s\S]*?)\n\n`), what), /^- `([A-Z0-9_]+)`/gm);
 
 const bindings = [
   {
@@ -129,14 +142,18 @@ const bindings = [
     ),
   },
   {
-    list: 'the repository secrets the deploy takes',
+    list: 'the environment variables the deploy reads',
     owner: '.github/workflows/deploy.yml',
-    where: "README.md's GitHub Actions setup list",
-    owned: declaredSecrets,
-    restated: allOf(
-      capture(readme, /these repository secrets:\n\n([\s\S]*?)\n\n/, 'the repository-secrets list in README.md'),
-      /^- `([A-Z0-9_]+)`/gm,
-    ),
+    where: "README.md's environment variables list",
+    owned: readFrom('vars'),
+    restated: readmeList('Add these environment variables:', 'the environment-variables list in README.md'),
+  },
+  {
+    list: 'the environment secrets the deploy reads',
+    owner: '.github/workflows/deploy.yml',
+    where: "README.md's environment secrets list",
+    owned: readFrom('secrets'),
+    restated: readmeList('And these environment secrets:', 'the environment-secrets list in README.md'),
   },
 ];
 
@@ -158,6 +175,16 @@ describe('README restatements', () => {
       releasedMajor,
       `README.md says the project is at ${claimedMajor}.x, and .release-please-manifest.json carries a different major`,
     ).toBe(claimedMajor);
+  });
+
+  // The two lists below are built from same-named reads, so an entry read under
+  // another name or from a third context would belong to neither and escape
+  // both bindings. Every line of the block has to land in one of them.
+  it('reads every Deploy Worker value from vars or secrets under its own name', () => {
+    const entries = allOf(deployStepEnv, /^ {10}([A-Z0-9_]+):/gm);
+    const bound = [...readFrom('vars'), ...readFrom('secrets')];
+    const unbound = entries.filter((name) => !bound.includes(name));
+    expect(unbound, `deploy.yml reads ${unbound.join(', ')} neither as vars.<name> nor as secrets.<name>`).toEqual([]);
   });
 
   describe.each(bindings)('$list', ({ owner, where, owned, restated }) => {
