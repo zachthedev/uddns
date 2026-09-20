@@ -2,7 +2,7 @@
 
 [![CodeQL](https://github.com/zachthedev/uddns/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/github-code-scanning/codeql)
 [![CI](https://github.com/zachthedev/uddns/actions/workflows/ci.yml/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/ci.yml)
-[![Dependabot Updates](https://github.com/zachthedev/uddns/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/dependabot/dependabot-updates)
+[![Dependency Updates](https://github.com/zachthedev/uddns/actions/workflows/dependency-updates.yml/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/dependency-updates.yml)
 [![Deploy](https://github.com/zachthedev/uddns/actions/workflows/deploy.yml/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/deploy.yml)
 
 A Cloudflare Worker that lets UniFi OS devices (UDM and UXG series) dynamically update DNS A/AAAA records on Cloudflare.

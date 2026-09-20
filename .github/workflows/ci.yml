@@ -50,6 +50,9 @@ jobs:
       - name: Check committed config is clean
         run: bun scripts/check-placeholders.ts
 
+      - name: Check the dependency cooldown
+        run: bun scripts/check-cooldown.ts
+
   test:
     name: Test & Coverage
     runs-on: ubuntu-latest
@@ -116,13 +119,15 @@ jobs:
       - name: Audit dependencies
         run: bun audit --audit-level=high
 
-      # Dependabot moves the trufflehog pin below, and its version comment, but
-      # never the version input, so the scanner image would stay behind. This
-      # fails until the pinned digest is the image published for that release.
+      # Renovate moves the action and this image together, and reads the digest
+      # from Docker Hub, because ghcr.io returns no release timestamp and the
+      # cooldown would hold a ghcr.io lookup forever. This asserts that ghcr.io,
+      # which is what the action pulls, publishes that same digest for the
+      # action's release.
       - name: Check the scanner image matches the action release
         run: |
           release=$(sed -nE 's|.*trufflesecurity/trufflehog@[0-9a-f]{40} # v([0-9.]+)$|\1|p' .github/workflows/ci.yml)
-          pinned=$(sed -nE 's|.*version: [0-9.]+@(sha256:[0-9a-f]{64})$|\1|p' .github/workflows/ci.yml)
+          pinned=$(sed -nE 's|.* version: [0-9]+\.[0-9]+\.[0-9]+@(sha256:[0-9a-f]{64})$|\1|p' .github/workflows/ci.yml)
           published=$(docker buildx imagetools inspect "ghcr.io/trufflesecurity/trufflehog:${release}" --format '{{json .Manifest.Digest}}' | tr -d '"')
           if [ -z "$pinned" ] || [ "$pinned" != "$published" ]; then
             echo "trufflehog image pin is '${pinned}', but release ${release} publishes '${published}'." >&2
