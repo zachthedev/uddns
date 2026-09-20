@@ -163,16 +163,81 @@ jobs:
       # timestamp-required, a ghcr.io lookup has no timestamp to clear the
       # cooldown with and would never move. This asserts that ghcr.io, which is
       # what the action pulls, publishes that same digest for the action's
-      # release.
+      # release. Upstream builds the image once per registry, so agreement is a
+      # property of those builds and not of a mirror.
+      #
+      # The release and the pin are read from this file, each anchored to its
+      # key so a comment quoting either line is not a second value, and each
+      # must occur exactly once. A pin that trails upstream passes, because the
+      # two are compared to each other and not to the newest tag.
+      #
+      # The read is the registry HTTP API under an anonymous pull token, the
+      # exchange a pull opens with, so it needs no daemon. No response, 408,
+      # 429 and 5xx are the transport class: three attempts, then a warning,
+      # and the comparison is skipped. Every other status is a definitive
+      # answer and is not retried. A 200 with a different digest is the
+      # condition and fails the job. Any other definitive answer with no
+      # digest, a 404 or a redirect included, fails the job too, because a
+      # step that warns on a permanent answer is a step that is off. The scan
+      # below pulls this image by digest from this registry, so an outage
+      # fails there in any case. A skipped comparison cannot run an image
+      # ghcr.io does not hold at the pinned digest; it could run one ghcr.io
+      # holds under another tag, and failing on a definitive 404 is what keeps
+      # that from passing quietly.
+      #
+      # Both index media types are offered. ghcr.io answers 404 to a request
+      # for an OCI index that offers only the Docker list type, so a narrower
+      # header would fail this step on the day upstream publishes an index.
       - name: Check the scanner image matches the action release
         run: |
-          release=$(sed -nE 's|.*trufflesecurity/trufflehog@[0-9a-f]{40} # v([0-9.]+)$|\1|p' .github/workflows/ci.yml)
-          pinned=$(sed -nE 's|.* version: [0-9]+\.[0-9]+\.[0-9]+@(sha256:[0-9a-f]{64})$|\1|p' .github/workflows/ci.yml)
-          published=$(docker buildx imagetools inspect "ghcr.io/trufflesecurity/trufflehog:${release}" --format '{{json .Manifest.Digest}}' | tr -d '"')
-          if [ -z "$pinned" ] || [ "$pinned" != "$published" ]; then
-            echo "trufflehog image pin is '${pinned}', but release ${release} publishes '${published}'." >&2
+          release=$(sed -nE 's|^ +uses: trufflesecurity/trufflehog@[0-9a-f]{40} # v([0-9]+\.[0-9]+\.[0-9]+)$|\1|p' .github/workflows/ci.yml)
+          pinned=$(sed -nE 's|^ +version: [0-9]+\.[0-9]+\.[0-9]+@(sha256:[0-9a-f]{64})$|\1|p' .github/workflows/ci.yml)
+          release_count=$(printf '%s\n' "$release" | awk 'NF { n++ } END { print n + 0 }')
+          pinned_count=$(printf '%s\n' "$pinned" | awk 'NF { n++ } END { print n + 0 }')
+          if [ "$release_count" -ne 1 ] || [ "$pinned_count" -ne 1 ]; then
+            echo "::error::ci.yml must name the trufflehog release once and its image pin once; found ${release_count} release line(s) and ${pinned_count} pin line(s)."
             exit 1
           fi
+          accept='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'
+          published=''
+          definitive=''
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then sleep 5; fi
+            token=$(curl -sS --max-time 20 'https://ghcr.io/token?scope=repository:trufflesecurity/trufflehog:pull' | jq -r '.token // empty') || token=''
+            if [ -z "$token" ]; then
+              answer='no token'
+              continue
+            fi
+            response=$(curl -sS --max-time 20 -I -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" "https://ghcr.io/v2/trufflesecurity/trufflehog/manifests/${release}") || response=''
+            status=$(printf '%s\n' "$response" | sed -n '1s|^HTTP/[0-9.]* \([0-9]\{3\}\).*|\1|p')
+            if [ -z "$status" ]; then
+              answer='no response'
+              continue
+            fi
+            answer="HTTP ${status}"
+            case "$status" in
+              408 | 429 | 5??) continue ;;
+            esac
+            definitive=1
+            digest=$(printf '%s\n' "$response" | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2 }')
+            case "${status}:${digest}" in
+              "200:sha256:"*) published=$digest ;;
+            esac
+            break
+          done
+          if [ -z "$definitive" ]; then
+            echo "::warning::ghcr.io returned no digest for trufflehog ${release} in 3 attempts (last: ${answer}); the image pin was not compared."
+            exit 0
+          fi
+          if [ -z "$published" ]; then
+            echo "::error::ghcr.io answered ${answer} for trufflehog ${release} and returned no digest."
+            exit 1
+          fi
+          if [ "$pinned" != "$published" ]; then
+            echo "::error::trufflehog image pin is '${pinned}', but ghcr.io publishes '${published}' for release ${release}."
+            exit 1
+          fi
+          echo "trufflehog ${release} pin matches ghcr.io: ${published}"
 
       # No base or head input: the action then scans the pull request's
       # base..head commits, or a push's before..after. A branch name as base
