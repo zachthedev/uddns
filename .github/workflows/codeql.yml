@@ -1,0 +1,75 @@
+name: codeql
+
+# Code scanning as advanced setup, which is this file, rather than as default setup, which is a
+# switch on the repository settings page and leaves nothing in the tree. A committed workflow is one
+# a reader can audit and one Renovate pins by commit. Default setup pins neither the query packs nor
+# the action versions, and a settings change there can rename a check the main ruleset requires,
+# which blocks every merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Weekly, so a query published after the last change to this repository still reports against
+  # this tree. Thursday, clear of dependency-updates.yml's daily cron and of dependency-audit.yml's.
+  schedule:
+    - cron: '37 9 * * 4'
+
+# No job gets a permission it does not name for itself.
+permissions: {}
+
+# The group carries the workflow's own name, so a rename moves the group with it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every action is pinned to a commit, as in every other workflow here. A tag can be retargeted by
+# its owner with no pull request and no cooldown; a commit cannot. Renovate's github-actions manager
+# bumps the hash and keeps the version comment current.
+jobs:
+  # Two languages. javascript-typescript is one extractor over the Worker, its tests, its scripts
+  # and the JavaScript config files; javascript and typescript are its aliases, not a third and a
+  # fourth analysis.
+  #
+  # The job name is what the check run is called, so `Analyze (javascript-typescript)` and
+  # `Analyze (actions)` are the names a branch ruleset requires. A matrix job with no name of its
+  # own takes every value in the entry, runner included, which would move the name with the runner.
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      # Uploading the results to code scanning.
+      security-events: write
+      # Reading the checkout. GitHub's documentation names both of these reads for a private
+      # repository, and granting them here keeps visibility from deciding what this workflow does.
+      contents: read
+      actions: read
+    strategy:
+      # One language failing still reports the other.
+      fail-fast: false
+      matrix:
+        include:
+          # The Worker under src, with the tests and the scripts.
+          - language: javascript-typescript
+            runner: ubuntu-latest
+          # The workflows under .github. CodeQL's Actions queries follow event payload data into
+          # run blocks, inputs and artifacts.
+          - language: actions
+            runner: ubuntu-latest
+    steps:
+      # This job pushes nothing, so the job token does not stay in the checkout for the steps that
+      # follow it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # build-mode none extracts the sources without building them. wrangler bundles the Worker only
+      # at deploy time, and the analysis reads the sources that bundle is built from.
+      # worker-configuration.d.ts is committed, so it is read like any other source file.
+      - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      # The category is what keeps one language's results from replacing the other's.
+      - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          category: '/language:${{ matrix.language }}'
