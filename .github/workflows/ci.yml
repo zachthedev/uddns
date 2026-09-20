@@ -12,6 +12,52 @@ on:
     branches: [main]
 
 jobs:
+  # First in the file so a message problem is the first failure a contributor
+  # sees. It needs nothing and nothing needs it.
+  commits:
+    name: Commit Messages
+    runs-on: ubuntu-latest
+    # release-please carries the generated changelog as its commit body, whose
+    # markdown lines run well past the width every other commit here holds to.
+    # The author is half the match because a branch name is chosen by whoever
+    # opens the pull request, a fork included, and this job is meant to become a
+    # required check.
+    if: >-
+      github.event_name == 'pull_request' && !(github.event.pull_request.user.login == 'github-actions[bot]' &&
+      startsWith(github.head_ref, 'release-please--'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # commitlint walks base..head, so the range has to be present. A
+          # shallow clone leaves it with nothing to read.
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # A rebase merge lands these subjects unchanged, so they are linted as
+      # written. A squash merge discards them for the subject below.
+      - name: Lint the pull request commits
+        run: bun node_modules/@commitlint/cli/cli.js --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+
+      # A squash merge builds the subject from the title with the number
+      # appended, so composing the two lints the string that reaches main
+      # rather than the shorter one a reviewer reads. Both values arrive
+      # through the environment and reach commitlint on stdin, so neither is
+      # ever a shell word.
+      - name: Lint the squash subject
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: printf '%s (#%s)' "$PR_TITLE" "$PR_NUMBER" | bun node_modules/@commitlint/cli/cli.js --verbose
+
   checks:
     name: Gate
     runs-on: ubuntu-latest
