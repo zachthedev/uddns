@@ -3,8 +3,9 @@ name: Release
 # A push to main updates one open release pull request; it does not cut a
 # version. That pull request carries the version bump and the changelog entries
 # for everything landed since the last release, so merging it is the act that
-# releases. release-please then tags the merge commit, publishes the GitHub
-# Release, and the deploy job below ships that revision.
+# releases. release-please then tags the merge commit and creates the GitHub
+# Release as a draft. The publish job below makes it public once a reviewer
+# approves, and the deploy job ships that revision after that.
 on:
   push:
     branches: [main]
@@ -12,18 +13,12 @@ on:
 permissions:
   contents: read
 
-# Two pushes landing together would otherwise race to write the same release
-# pull request. Queued rather than cancelled, so the later push still gets its
-# commits into the release notes.
-concurrency:
-  group: release-main
-  cancel-in-progress: false
-
 jobs:
-  # Ahead of the release, not after it. A tag and a GitHub Release cannot be
-  # withdrawn once published, so the only useful place for the gate is before
-  # they exist. The release pull request carries checks of its own, because the
-  # app token below is what opens it, so this covers the push to main itself.
+  # Ahead of the release, not after it. A tag cannot be withdrawn once it
+  # exists, and release-please creates it alongside the draft, so the only
+  # useful place for the gate is before either does. The release pull request
+  # carries checks of its own, because the app token below is what opens it,
+  # so this covers the push to main itself.
   verify:
     name: Verify
     runs-on: ubuntu-latest
@@ -51,6 +46,15 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Two pushes landing together would otherwise race to write the same
+    # release pull request. Queued rather than cancelled, so the later push
+    # still gets its commits into the release notes. On this job rather than
+    # the workflow: a run waiting on the reviewer below holds a workflow-level
+    # group, and every later push to main would queue behind that approval
+    # with the release pull request frozen until it lands.
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
     # Every credential this job uses comes from the app, so the job token gets
     # nothing.
     permissions: {}
@@ -64,6 +68,7 @@ jobs:
       deployment: false
     outputs:
       released: ${{ steps.release-please.outputs.release_created }}
+      tag_name: ${{ steps.release-please.outputs.tag_name }}
 
     steps:
       # A pull request opened by GITHUB_TOKEN has its CI run held at
@@ -88,6 +93,10 @@ jobs:
           # this permission, not under issues.
           permission-pull-requests: write
 
+      # release-please-config.json sets draft and force-tag-creation. The
+      # Release is created as a draft, and the tag is created at the same
+      # time, where GitHub on its own would create it only at publish. The
+      # publish job reads that tag from git.
       - name: Run release-please
         id: release-please
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -96,9 +105,128 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  # A person publishes, through the reviewer on the release environment. That
+  # reviewer is the whole reason the Release starts as a draft: uddns attaches
+  # no assets, so the other reason for one, a window in which a release exists
+  # with nothing on it, does not apply here.
+  #
+  # The `released` output exists only when release-please finishes. Its last
+  # act is removing `autorelease: pending` from the pull request, with no
+  # try/catch around it, so a label somebody removed by hand answers 404 and
+  # the step fails after the tag and the draft already exist. release_created
+  # is then never set, this job never runs, and the draft stays a draft with
+  # nothing to publish it. Nobody removes that label by hand.
+  publish:
+    name: Publish
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A real deployment environment, unlike release-pr: the required reviewer
+    # on it is the gate between a merge and a public release, and through the
+    # deploy job below, production. A deployment branch policy naming main
+    # keeps any other branch from reaching it.
+    environment: release
+    # Editing a release is a contents write, and the job token is enough for
+    # it. It is also the right token: the release event a GITHUB_TOKEN write
+    # raises starts no other workflow, and the deploy lives in this one, so
+    # nothing downstream is missed. No app credential leaves release-pr.
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release.outputs.tag_name }}
+    # pipefail, so a git or gh failure inside a pipeline fails the step
+    # rather than handing the next command empty input.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # The whole history and every tag, so the checks below read the tag
+      # from git with nothing left to shallow-fetch negotiation. The repository
+      # is small enough for that to cost about a second.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The tag's name is release-please's reading of the release pull
+      # request's title, a field anyone with write access can edit, and its
+      # version regex is unanchored. The manifest at GITHUB_SHA carries the
+      # version release-please computed when it built the pull request, so
+      # the tag has to be v plus that and nothing else, which is what
+      # include-v-in-tag and include-component-in-tag in the config produce.
+      # Read from the commit rather than the working tree, so the bind does
+      # not depend on what the checkout put there. A name bound this way holds
+      # no revision operator, so the peels below resolve a ref and only a ref.
+      - name: Refuse a tag that is not the manifest version
+        run: |
+          expected="v$(git show "${GITHUB_SHA}:.release-please-manifest.json" | jq -r '."."')"
+          if [ "$TAG" != "$expected" ]; then
+            echo "::error::${TAG} is not the manifest version ${expected} at ${GITHUB_SHA}."
+            exit 1
+          fi
+
+      # What the tag names, against the commit this run is for. GITHUB_SHA is
+      # what verify checked and what deploy.yml checks out, so a tag naming
+      # any other commit would publish one revision and ship another. The
+      # peel resolves an annotated tag to its commit; a lightweight tag is
+      # its own commit already.
+      - name: Refuse a tag that does not name this commit
+        run: |
+          if ! target=$(git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}"); then
+            echo "::error::${TAG} is not a tag in this repository."
+            exit 1
+          fi
+          if [ "$target" != "$GITHUB_SHA" ]; then
+            echo "::error::${TAG} names ${target} and this run is for ${GITHUB_SHA}."
+            exit 1
+          fi
+
+      # A tag can name any commit. This job publishes whatever it is given, so
+      # it refuses a commit main does not contain. After the check above that
+      # means main was rewritten since the push that started this run. Main is
+      # fetched again first: the checkout pins origin/main to GITHUB_SHA when
+      # main has moved on, and against that ref the check would always pass.
+      - name: Refuse a tag that is not on main
+        run: |
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "refs/tags/${TAG}^{commit}" origin/main; then
+            echo "::error::${TAG} is not on main, so ci never checked it."
+            exit 1
+          fi
+
+      # Two drafts can wait for approval at once. Approving the newer first
+      # and the older second would ship the older revision last and mark the
+      # older release Latest, because deploy-production serializes deploys
+      # without ordering them. So the latest published release has to be an
+      # ancestor of this tag. A published release whose tag is gone refuses
+      # too. A draft refused here stays a draft; the newer release already
+      # carries its changes, and nothing deploys it.
+      - name: Refuse a tag behind the latest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          latest=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -n "$latest" ] && ! git merge-base --is-ancestor "refs/tags/${latest}^{commit}" "refs/tags/${TAG}^{commit}"; then
+            echo "::error::${TAG} is behind ${latest}, which is already published."
+            exit 1
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$TAG" --draft=false
+
   deploy:
     name: Deploy
-    needs: release
+    # After publish, so production takes a revision only once a person has
+    # published its release. The same condition as publish: a skipped publish
+    # skips this, and a refused or rejected one leaves it unrun.
+    needs: [release, publish]
     if: needs.release.outputs.released == 'true'
     # deploy.yml answers to workflow_call and workflow_dispatch alone, so the
     # release tag reaches it only through this call. One deploy definition,
