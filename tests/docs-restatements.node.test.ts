@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * README.md restates three lists that are defined elsewhere: the changelog
- * sections release-please publishes, the ones it keeps back, and the secrets
- * deploy.yml declares. Each list is read here from the file that owns it, so a
- * name added on one side and not the other fails a check rather than sitting
- * wrong in the documentation.
+ * README.md restates facts that are defined elsewhere: the changelog sections
+ * release-please publishes, the ones it keeps back, the secrets deploy.yml
+ * declares, and the major version the project is on. Each one is read here from
+ * the file that owns it, so a name added on one side and not the other fails a
+ * check rather than sitting wrong in the documentation.
  *
  * The real files are read rather than fixtures. A fixture would be a third copy
  * of each list, and a third copy drifts the way the second one does.
@@ -88,6 +88,19 @@ const publishedTypes = sectionTypes(false);
 /** The type the README singles out as the minor bump, which its patch list therefore excludes. */
 const minorType = capture(prose, /`([a-z]+):` gives a minor/, 'the type the README calls the minor bump');
 
+/** The major version the README's versioning rationale says the project is on. */
+const claimedMajor = capture(prose, /Being at (\d+)\.x/, "the README's statement of the major version it is on");
+
+/** The major release-please last cut, which is the number that rationale describes. */
+const releasedMajor = ((): string => {
+	const manifest = JSON.parse(read('../.release-please-manifest.json')) as Record<string, string | undefined>;
+	const version = manifest['.'];
+	if (version === undefined) {
+		throw new Error('.release-please-manifest.json carries no version for the root package.');
+	}
+	return capture(version, /^(\d+)\./, `a major version in the released ${version}`);
+})();
+
 /**
  * The secret names deploy.yml accepts, matched by shape rather than parsed: the
  * repository carries no YAML dependency, and workflow_call's secrets block is a
@@ -134,6 +147,15 @@ describe('README restatements', () => {
 			publishedTypes,
 			`README.md calls \`${minorType}\` the minor bump, so release-please-config.json must publish its section`,
 		).toContain(minorType);
+	});
+
+	// The rationale for starting at 1.0.0 stops describing this repository once
+	// it leaves that major, so the prose names the major and this reads it back.
+	it('names the major version release-please is on', () => {
+		expect(
+			releasedMajor,
+			`README.md says the project is at ${claimedMajor}.x, and .release-please-manifest.json carries a different major`,
+		).toBe(claimedMajor);
 	});
 
 	describe.each(bindings)('$list', ({ owner, where, owned, restated }) => {
