@@ -15,9 +15,9 @@ files you stage, and check every commit message before it is recorded.
 bun run check:all
 ```
 
-One command, and it is the whole gate. CI runs the same checks split across two jobs, `Gate` for
-`bun run check` and `Test & Coverage` for `bun run test:coverage`, so a green run on your machine is a
-green run there. Run it before you push. `bun run test:watch` reruns the suite as you edit.
+One command, and it is the whole gate. CI runs the same checks, split across the `Gate` job for
+`bun run check` and the `Test & Coverage` job for `bun run test:coverage`, so a green run on your
+machine is a green run there. Run it before you push. `bun run test:watch` reruns the suite as you edit.
 
 A few checks run only in CI. `CLAUDE.md` lists them and says why each one sits outside the gate.
 
@@ -36,7 +36,7 @@ type(scope): subject
 body
 ```
 
-The type is one of the eleven that `@commitlint/config-conventional` accepts: `feat`, `fix`, `docs`,
+The type is one of those `@commitlint/config-conventional` accepts: `feat`, `fix`, `docs`,
 `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore` and `revert`. The specification itself fixes
 only `feat` and `fix`; the rest are the Angular convention that preset encodes. Release notes come from
 the type, so pick the one that says what the change does to a user rather than how it was made.

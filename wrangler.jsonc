@@ -1,95 +1,95 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "uddns",
-	"main": "src/index.ts",
-	// The release date of the workerd that wrangler and the vitest plugin share.
-	// workerd refuses a date more than 7 days past its own release. From
-	// 2026-08-04 nodejs_compat and nodejs_compat_v2 are runtime defaults, so
-	// stating either one adds nothing; no_nodejs_compat is what turns them off.
-	"compatibility_date": "2026-09-18",
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "uddns",
+  "main": "src/index.ts",
+  // The release date of the workerd that wrangler and the vitest plugin share.
+  // workerd refuses a date more than 7 days past its own release. From
+  // 2026-08-04 nodejs_compat and nodejs_compat_v2 are runtime defaults, so
+  // stating either one adds nothing; no_nodejs_compat is what turns them off.
+  "compatibility_date": "2026-09-18",
 
-	// Set CUSTOM_DOMAIN to attach a custom domain; the deploy injects it as a
-	// custom_domain route. Otherwise the worker is served at its
-	// <name>.<subdomain>.workers.dev URL.
+  // Set CUSTOM_DOMAIN to attach a custom domain; the deploy injects it as a
+  // custom_domain route. Otherwise the worker is served at its
+  // <name>.<subdomain>.workers.dev URL.
 
-	// account_id is intentionally absent: wrangler reads CLOUDFLARE_ACCOUNT_ID
-	// from the environment (GitHub Actions secret in CI, .env.local locally).
+  // account_id is intentionally absent: wrangler reads CLOUDFLARE_ACCOUNT_ID
+  // from the environment (GitHub Actions secret in CI, .env.local locally).
 
-	// KV namespace caching the last known IP address per record.
-	// The placeholder IDs below are never replaced in this file; deploys go
-	// through `bun run deploy`, which generates wrangler.deploy.jsonc with the
-	// real IDs from the environment. Local `wrangler dev` simulates KV and
-	// ignores the IDs entirely. Run `bun run setup` to provision namespaces.
-	"kv_namespaces": [
-		{
-			"binding": "DDNS_KV",
-			"id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID",
-			"preview_id": "REPLACE_WITH_YOUR_PREVIEW_KV_NAMESPACE_ID",
-		},
-	],
+  // KV namespace caching the last known IP address per record.
+  // The placeholder IDs below are never replaced in this file; deploys go
+  // through `bun run deploy`, which generates wrangler.deploy.jsonc with the
+  // real IDs from the environment. Local `wrangler dev` simulates KV and
+  // ignores the IDs entirely. Run `bun run setup` to provision namespaces.
+  "kv_namespaces": [
+    {
+      "binding": "DDNS_KV",
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID",
+      "preview_id": "REPLACE_WITH_YOUR_PREVIEW_KV_NAMESPACE_ID",
+    },
+  ],
 
-	// D1 database for the append-only audit trail of DNS changes.
-	// Same placeholder scheme as KV: scripts/deploy.ts injects the real ID
-	// from the environment at deploy time. Run `bun run setup` to provision.
-	"d1_databases": [
-		{
-			"binding": "AUDIT_DB",
-			"database_name": "d1-uddns-audit-prod",
-			"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
-			"migrations_dir": "migrations",
-		},
-	],
+  // D1 database for the append-only audit trail of DNS changes.
+  // Same placeholder scheme as KV: scripts/deploy.ts injects the real ID
+  // from the environment at deploy time. Run `bun run setup` to provision.
+  "d1_databases": [
+    {
+      "binding": "AUDIT_DB",
+      "database_name": "d1-uddns-audit-prod",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations",
+    },
+  ],
 
-	// Edge-local request throttle per caller IP. Best-effort (per-colo), which
-	// is exactly right for capping invocation abuse on a public endpoint.
-	"ratelimits": [
-		{
-			"name": "RATE_LIMITER",
-			"namespace_id": "1001",
-			"simple": {
-				"limit": 50,
-				"period": 60,
-			},
-		},
-	],
+  // Edge-local request throttle per caller IP. Best-effort (per-colo), which
+  // is exactly right for capping invocation abuse on a public endpoint.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 50,
+        "period": 60,
+      },
+    },
+  ],
 
-	// One instance per API token. Requests to an instance serialize, which is
-	// what makes the refusal tally immune to the races and burst timing that a
-	// KV counter could not defend against.
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "REFUSALS",
-				"class_name": "RefusalCounter",
-			},
-		],
-	},
+  // One instance per API token. Requests to an instance serialize, which is
+  // what makes the refusal tally immune to the races and burst timing that a
+  // KV counter could not defend against.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REFUSALS",
+        "class_name": "RefusalCounter",
+      },
+    ],
+  },
 
-	"exports": {
-		"RefusalCounter": {
-			"type": "durable-object",
-			"storage": "sqlite",
-		},
-	},
+  "exports": {
+    "RefusalCounter": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
 
-	// Workers Logs
-	// Docs: https://developers.cloudflare.com/workers/observability/logs/workers-logs/
-	"observability": {
-		"enabled": true,
-		// The query string carries the caller's ntfy topic, which is the only
-		// thing guarding who can read its notifications, alongside the zone and
-		// hostnames it manages. Redaction keeps all of it out of logs and traces.
-		"redact_query_string": true,
-		// No per-request invocation log. The handler logs every request the rate
-		// limiter admits and the outcome of each, so a flood it turns away writes
-		// no line at all.
-		"logs": {
-			"invocation_logs": false,
-		},
-	},
+  // Workers Logs
+  // Docs: https://developers.cloudflare.com/workers/observability/logs/workers-logs/
+  "observability": {
+    "enabled": true,
+    // The query string carries the caller's ntfy topic, which is the only
+    // thing guarding who can read its notifications, alongside the zone and
+    // hostnames it manages. Redaction keeps all of it out of logs and traces.
+    "redact_query_string": true,
+    // No per-request invocation log. The handler logs every request the rate
+    // limiter admits and the outcome of each, so a flood it turns away writes
+    // no line at all.
+    "logs": {
+      "invocation_logs": false,
+    },
+  },
 
-	// Deliberately NO smart placement: the hot path (gated cache hit) is
-	// KV-only and belongs at the ingress colo, and the rate limiter's
-	// per-machine counters only cohere when execution stays there. Only rare
-	// cache-miss paths talk to the Cloudflare API.
+  // Deliberately NO smart placement: the hot path (gated cache hit) is
+  // KV-only and belongs at the ingress colo, and the rate limiter's
+  // per-machine counters only cohere when execution stays there. Only rare
+  // cache-miss paths talk to the Cloudflare API.
 }

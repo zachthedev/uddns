@@ -102,9 +102,18 @@ development dependency, a wrangler bump and an action bump land as `chore` or
 `ci` and do not. Unhiding one of those types would put its commits back in the
 body, so each would cut a release and deploy.
 
+The version started at 1.0.0 rather than 0.x, deliberately. The Worker's
+interface is its URL contract: the query parameters a UniFi device sends and
+the JSON it gets back. That contract was settled at v1.0.0 and still holds, so
+the number states stability rather than defaulting to it.
+
+Being at 1.x is also what gives `feat!` its meaning. Below 1.0.0, release-please
+treats a breaking change as a minor bump, so the marker cannot signal a break at
+all.
+
 Use the Deploy workflow's manual run to deploy a revision without releasing one.
 
-Two mechanics are worth knowing. The release tag is created by the workflow's
+These mechanics are worth knowing. The release tag is created by the workflow's
 own token, and GitHub starts no workflow run from one, which is why the Release
 workflow calls the deploy directly instead of leaving it on a tag trigger, and
 why a tag pushed by hand deploys nothing. For the same reason the release pull
@@ -192,7 +201,7 @@ describes. Distinct rather than total, because a DDNS client polls every two min
 wrong passes any total given an afternoon. Variety is what a caller sweeping for names it does not hold
 produces and a misconfigured one does not.
 
-Three limits are worth stating plainly. The tally is keyed on the API token, and a Cloudflare account
+These limits are worth stating plainly. The tally is keyed on the API token, and a Cloudflare account
 issues tokens freely, so an enumerator that rotates tokens before reaching the threshold never trips it.
 The per-record IP cache is consulted before zones are read, so for up to its own 30-day TTL after a token
 loses a zone, a name it used to hold still answers 200 and counts nothing; that is the record cache, not
