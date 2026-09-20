@@ -5,6 +5,5 @@
 # `bun install` inside a container that has no user-level config, and Renovate
 # cannot apply its own cooldown to that update type. Without this file a
 # transitive dependency published minutes ago would land in bun.lock there.
-# scripts/check-cooldown.ts asserts this value alongside the Renovate config.
 [install]
 minimumReleaseAge = 259200 # 3 days

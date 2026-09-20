@@ -19,16 +19,32 @@ override; it needs a re-resolve.
 `bun audit` queries a live advisory database, so an audit that passed yesterday can flag a version that was
 already installed. A new advisory usually means a stale lockfile entry, not a missing override.
 
+## Current advisory waivers
+
+None. The `audit` script in `package.json` carries no `--ignore` flag, which is the state to return to.
+
+A waiver is for an advisory the team has read and consciously accepted: no fix is published yet, or the
+vulnerable path is unreachable from this Worker. It is never for making a red check green. Each waiver is a
+`--ignore <GHSA-id>` on the `audit` script and, in the same commit, a row here. `package.json` takes no
+comments, so this table is the record and the flag points at it by ID. A flag with no row is an unreviewed
+suppression and is the shape this table exists to prevent.
+
+| Advisory | Affects | Why shipping is safer than not | Removed when |
+| -------- | ------- | ------------------------------ | ------------ |
+
+Keep the table in sync with the flags: every row maps to one `--ignore`, and dropping a flag means deleting
+its row. Re-check every row on each dependency bump, the same way as an override below.
+
 ## Clearing an audit failure
 
-A `bun audit --audit-level=high` failure is not proof that an override is needed. Most are a lockfile
+A `bun run audit` failure is not proof that an override is needed. Most are a lockfile
 carrying an old resolution for a package whose parent range already spans the patched floor. From a clean
 working tree:
 
 1. Re-resolve from scratch. This also re-applies the publish cooldown:
    ```sh
    rm bun.lock && bun install
-   bun audit --audit-level=high
+   bun run audit
    ```
 2. Decide based on the result:
    - **Clean**: the parents reach a patched version on their own. Commit `bun.lock`.

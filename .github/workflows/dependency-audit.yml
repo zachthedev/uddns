@@ -1,0 +1,47 @@
+name: Dependency Audit
+
+# An advisory is a function of the world rather than of the tree, so it is not a
+# gate check: the same commit passes today and fails tomorrow with nothing
+# changed. It runs on every pull request and push to main through ci.yml,
+# where blocking is right, and here on a schedule so a newly published advisory
+# surfaces on its own rather than waiting for the next unrelated pull request.
+#
+# Renovate already opens a pull request for an advisory that has a fixed
+# version, ahead of its own schedule and cooldown. This catches what it cannot:
+# an advisory with no fix published yet, which no pull request would carry.
+#
+# A scheduled run is a safety net rather than a guarantee. GitHub delays the
+# schedule event under load and drops queued jobs outright when load is high
+# enough, so the audit that actually blocks is the one on the pull request.
+on:
+  # Not 0 6: the top of the hour is the documented high-load window where
+  # scheduled runs queue behind everything else GitHub starts, and this is
+  # also kept clear of the Renovate run in dependency-updates.yml.
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+
+# The job reads the lock file and nothing else.
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # bun audit reads bun.lock, so this job needs bun but not an install.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Audit dependencies
+        run: bun run audit
