@@ -77,6 +77,16 @@ And these environment secrets:
 - `CLOUDFLARE_API_TOKEN` - API token with Workers Scripts, Workers KV, and D1 edit permissions
 - `ACCESS_KEY` - Optional; locks the worker to callers that present it
 
+`ACCESS_KEY` is 32 hexadecimal characters (16 random bytes). One comes from
+`openssl rand -hex 16`, or on a machine without openssl from
+`bun -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex'))"`.
+`bun run setup` writes one of that shape to `.env.local` when you accept its
+offer. Set it with `gh secret set ACCESS_KEY --env production` from the fork's
+clone. The next deploy syncs it to the Worker. Then put the same value in every
+device's DDNS Username. Keep that order. The Worker refuses every other value
+the moment the deploy finishes. A device still sending one gets 401 until its
+Username changes.
+
 Releases then deploy, and pushes do not. Deploys apply the D1 migrations, so
 tying one to a release means the schema in production corresponds to a revision
 you can check out, instead of to whichever commit landed last.
@@ -154,7 +164,7 @@ injected at deploy time from the environment.
 3. Create New Dynamic DNS with the following information:
    - **Service:** `custom`
    - **Hostname:** `subdomain.example.com` or `example.com`
-   - **Username:** Your `ACCESS_KEY` if you configured one (recommended); any value otherwise (the field is never used for authentication)
+   - **Username:** Your `ACCESS_KEY` if you configured one (recommended); any value otherwise (the field is never used for Cloudflare authentication). [Option 3](#option-3-deploy-on-every-release-with-github-actions) says what shape the key has and how to set it
    - **Password:** Cloudflare User API Token scoped to DNS edit _(not an Account API Token)_
    - **Server:** `<worker-name>.<worker-subdomain>.workers.dev/update?ip4=%i&ip6=auto&hostnames=%h`
      _(Omit `https://`. Comma-separate to update several records at once: `hostnames=example.com,*.example.com`. A request carries up to 40 records, and each hostname counts once per IP family, so 40 hostnames with `ip4` alone or 20 with both. Batches near that size need the paid Workers plan; the free plan's 50-subrequest ceiling fits roughly six records. `ip4`/`ip6` each accept a literal address or `auto`, which uses the connecting IP when it matches that family and skips the slot otherwise; provide at least one. Optional `zone=example.com` restricts matching to one zone. Optional `ntfy=` sends change notifications to your ntfy server, pasted raw: `ntfy=https://ntfy.sh/my-topic`. Do not percent-encode it; inadyn treats `%` sequences as its own substitution variables.)_
