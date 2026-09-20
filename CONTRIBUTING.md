@@ -43,7 +43,9 @@ body
 The type is one of those `@commitlint/config-conventional` accepts: `feat`, `fix`, `docs`,
 `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore` and `revert`. The specification itself fixes
 only `feat` and `fix`; the rest are the Angular convention that preset encodes. Release notes come from
-the type, so pick the one that says what the change does to a user rather than how it was made.
+the type, so pick the one that says what the change does to a user rather than how it was made. Tooling
+and configuration changes take a type `release-please-config.json` hides, never `fix` or `feat`, because
+a published type opens a release pull request.
 
 The scope is optional. A change that belongs to no single area names none. `.github/commit-scopes.json`
 lists each scope and what it covers, and commitlint accepts no other. Omit the scope rather than invent
