@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [1.0.3](https://github.com/zachthedev/uddns/compare/v1.0.2...v1.0.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* restore mangled .gitignore globs from the Node template ([#213](https://github.com/zachthedev/uddns/issues/213)) ([359a95b](https://github.com/zachthedev/uddns/commit/359a95b9667db71bc6882f09aceaa66542cf031e))
+
 ## [1.0.2](https://github.com/zachthedev/uddns/compare/v1.0.1...v1.0.2) (2026-09-19)
 
 
