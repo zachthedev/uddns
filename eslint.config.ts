@@ -4,14 +4,7 @@ import prettierConfig from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  globalIgnores([
-    'node_modules/**',
-    '.wrangler/**',
-    'coverage/**',
-    'dist/**',
-    'worker-configuration.d.ts',
-    'wrangler.deploy.jsonc',
-  ]),
+  globalIgnores(['node_modules/**', '.wrangler/**', 'coverage/**', 'dist/**', 'worker-configuration.d.ts']),
 
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,

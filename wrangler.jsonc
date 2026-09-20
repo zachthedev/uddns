@@ -8,34 +8,32 @@
   // stating either one adds nothing; no_nodejs_compat is what turns them off.
   "compatibility_date": "2026-09-18",
 
-  // Set CUSTOM_DOMAIN to attach a custom domain; the deploy injects it as a
-  // custom_domain route. Otherwise the worker is served at its
+  // No route here. A deploy with CUSTOM_DOMAIN set passes it as a custom
+  // domain on the command line; without it the Worker is served at its
   // <name>.<subdomain>.workers.dev URL.
 
   // account_id is intentionally absent: wrangler reads CLOUDFLARE_ACCOUNT_ID
-  // from the environment (GitHub Actions secret in CI, .env.local locally).
+  // from the environment (GitHub Actions variable in CI, .env.local locally).
 
   // KV namespace caching the last known IP address per record.
-  // The placeholder IDs below are never replaced in this file; deploys go
-  // through `bun run deploy`, which generates wrangler.deploy.jsonc with the
-  // real IDs from the environment. Local `wrangler dev` simulates KV and
-  // ignores the IDs entirely. Run `bun run setup` to provision namespaces.
+  // No id: wrangler reuses the namespace the deployed Worker holds under this
+  // binding name, and creates one where no such Worker exists. Local
+  // `wrangler dev` and the vitest plugin simulate KV under the binding name.
   "kv_namespaces": [
     {
       "binding": "DDNS_KV",
-      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID",
-      "preview_id": "REPLACE_WITH_YOUR_PREVIEW_KV_NAMESPACE_ID",
     },
   ],
 
   // D1 database for the append-only audit trail of DNS changes.
-  // Same placeholder scheme as KV: scripts/deploy.ts injects the real ID
-  // from the environment at deploy time. Run `bun run setup` to provision.
+  // No database_id: wrangler reuses the database the deployed Worker holds
+  // under this binding name, or the account's database of this
+  // database_name, and creates one of this name where neither exists.
+  // `migrations apply` resolves the same name and creates nothing.
   "d1_databases": [
     {
       "binding": "AUDIT_DB",
       "database_name": "d1-uddns-audit-prod",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
       "migrations_dir": "migrations",
     },
   ],

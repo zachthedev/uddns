@@ -12,15 +12,17 @@ anything.
   separately as a substitute. `bun run check` is the part CI's `Gate` job runs, and the tests are the
   rest.
 - **A test never reaches the Cloudflare API, a DNS record or an ntfy server.** `fetch` is stubbed and
-  the bindings are miniflare's. Never run `bun run deploy` or `bun run setup` unless the user asks.
-  They provision and change resources on a real Cloudflare account.
+  the bindings are miniflare's. Never run `bun run deploy` unless the user asks. It provisions and
+  changes resources on a real Cloudflare account.
 - **Never read `.dev.vars`.** It holds real secrets. `.dev.vars.template` is the file to read.
 - **Commit scopes come from `.github/commit-scopes.json`.** commitlint enforces them. Omit the scope
   rather than invent one.
 - **release-please owns the version in `package.json`, `.release-please-manifest.json` and
   `CHANGELOG.md`.** Never edit any of the three by hand.
-- **`wrangler.jsonc` carries placeholders only.** Real IDs are injected at deploy time from the
-  environment, and the placeholder scan in the gate refuses anything else.
+- **`wrangler.jsonc` carries no resource IDs and no route.** wrangler reuses the KV namespace and D1
+  database the deployed Worker holds under the binding names, and creates them where no such Worker
+  exists. An ID committed there would pin every fork to one account, and `tests/wrangler-config.node.test.ts`
+  refuses one; the custom domain arrives from `CUSTOM_DOMAIN` at deploy time for the same reason.
 
 ## The documentation
 

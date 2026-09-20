@@ -9,7 +9,7 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
 
 - Install: `bun install`
 - Verify everything: `bun run check:all`. It is the whole gate, and every workflow calls a script rather
-  than listing its steps. `check` runs, roughly cheapest first, the placeholder scan, `typecheck`, `cf-typegen:check`,
+  than listing its steps. `check` runs, roughly cheapest first, `typecheck`, `cf-typegen:check`,
   `format:check` and `lint`. `check:all` adds the tests. A new check goes here, not into a workflow.
 - Documentation deviation, stated deliberately: no test binds a gate table to the gate's own step list,
   because the repository publishes no such table. `CONTRIBUTING.md` names commands and never legs.
@@ -75,9 +75,9 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   `Commit Messages` job lints the pull request's own commit range and its title, neither of which exists
   before the pull request does. A working machine could run these. The trufflehog digest assertion needs
   docker and ghcr.io and guards a pin Renovate moves in `ci.yml` itself. The deploy dry run
-  (`bun scripts/deploy.ts --dry-run`: about four seconds, offline, and it writes the gitignored
-  `wrangler.deploy.jsonc` and leaves it there) is a gate candidate still outside the gate. The audit is
-  none of these. It sits outside the gate by scope rather than as an exception, the same way a scheduled
+  (`bun x wrangler deploy --dry-run`: offline, no account or token, because it marks an absent resource ID
+  as inherited rather than resolving it) is a gate candidate still outside the gate. The audit is none of
+  these. It sits outside the gate by scope rather than as an exception, the same way a scheduled
   dependency update does.
 - Commit messages follow Conventional Commits, and commitlint enforces that: the lefthook `commit-msg`
   hook lints each message as it is recorded, and the `Commit Messages` job in `ci.yml` lints
@@ -100,8 +100,13 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   not used. A failure means the staged or committed file is stale: stage the regenerated one and run
   again. If wrangler itself fails, the file is absent until `git checkout -- worker-configuration.d.ts`
   restores it.
-- Deploy (local or CI): `bun run deploy` (see scripts/deploy.ts)
-- First-time setup on a clone or fork: `bun run setup`
+- Deploy (local or CI): `bun run deploy` (see scripts/deploy.ts). It applies the D1 migrations, deploys
+  the committed `wrangler.jsonc`, and syncs `ACCESS_KEY` when the environment carries one. The KV and D1
+  bindings carry no IDs: wrangler reuses the resources the deployed Worker holds under those binding
+  names and creates them where no such Worker exists. `migrations apply` resolves the database by name
+  and creates nothing, so a fresh account runs `wrangler d1 create d1-uddns-audit-prod` once before its
+  first deploy. `CUSTOM_DOMAIN`, when set, reaches wrangler as `--domain`; the committed config names no
+  route, so a fork lands on its workers.dev URL.
 - TypeScript: `bun run typecheck` runs the native 7.x compiler from the `@typescript/native` alias, called
   by path because `typescript` also ships a `tsc`. `typescript` stays on 6.x for typescript-eslint, which
   needs the 6.x compiler API. Once typescript-eslint's `typescript` peer range admits 7, move
@@ -113,8 +118,9 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
 Cloudflare resource naming: `<type>-<project>-<purpose>-<env>`, e.g.
 `kv-uddns-cache-prod`, `kv-uddns-cache-dev`, `d1-uddns-audit-prod`. Binding
 names in code stay short (`DDNS_KV`, `AUDIT_DB`). The D1 name comes from
-wrangler.jsonc and follows the convention automatically; KV namespaces
-created by `bun run setup` get wrangler's default titles, and the
-convention-named titles are applied by renaming in the dashboard (titles are
-cosmetic; IDs and bindings are what matter). The production worker is named
-`uddns` and is served at the custom domain `ddns.quist.network`.
+wrangler.jsonc and follows the convention automatically. A KV namespace
+wrangler creates on a first deploy is titled `uddns-ddns-kv`, its
+`<worker>-<binding>` default, and the convention-named title is applied by
+renaming in the dashboard (titles are cosmetic; wrangler matches on the
+binding name). The production worker is named `uddns` and is served at the
+custom domain `ddns.quist.network`.

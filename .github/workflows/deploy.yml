@@ -59,23 +59,21 @@ jobs:
       - name: Verify
         run: bun run check:all
 
-      # scripts/deploy.ts is the single deploy path: it generates
-      # wrangler.deploy.jsonc with the resource IDs, applies D1 migrations,
-      # deploys, and syncs the optional ACCESS_KEY worker secret. Local
-      # deploys run the same script.
+      # scripts/deploy.ts is the single deploy path: it applies D1 migrations,
+      # deploys the committed wrangler.jsonc, and syncs the optional ACCESS_KEY
+      # worker secret. Local deploys run the same script. No resource ID is
+      # read anywhere: wrangler reuses the KV namespace and D1 database the
+      # deployed Worker holds under the binding names in wrangler.jsonc.
       #
-      # Only the two values that grant access are secrets. The five identifiers
+      # Only the two values that grant access are secrets. The two identifiers
       # are environment variables, so they stay readable in the run log rather
       # than masked, and an unset one arrives as an empty string. CUSTOM_DOMAIN
-      # and ACCESS_KEY are optional: an empty domain leaves the route alone and
-      # an empty access key skips the secret sync.
+      # and ACCESS_KEY are optional: an empty domain leaves the Worker on its
+      # workers.dev URL and an empty access key skips the secret sync.
       - name: Deploy Worker
         run: bun run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
-          KV_NAMESPACE_PREVIEW_ID: ${{ vars.KV_NAMESPACE_PREVIEW_ID }}
-          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
           CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
           ACCESS_KEY: ${{ secrets.ACCESS_KEY }}
