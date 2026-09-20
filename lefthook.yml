@@ -1,20 +1,36 @@
 # Git hooks, installed by `lefthook install` (runs automatically via the
 # package.json prepare script on bun install).
+#
+# Every job runs its tool from node_modules by path, so the version that runs is
+# the one package.json pins. A resolver that falls back to the registry would
+# fetch an unpinned release at commit time, and git resolves hooks through the
+# common directory, so these run in linked worktrees where a package may not be
+# installed at all. Each path is the package's JavaScript entry point run under
+# bun, because node_modules/.bin holds only .exe and .bunx shims on Windows and
+# a bare node_modules/.bin/<tool> does not resolve there.
 
 pre-commit:
   jobs:
     # Order matters: lint fixes land before formatting, and both re-stage
     # their changes via stage_fixed.
     - name: eslint
-      glob: '*.{ts,mts}'
+      glob: '*.{ts,mts,js}'
       # --no-warn-ignored: staged files passed explicitly may be in the
       # eslint ignore list (generated worker-configuration.d.ts)
-      run: bunx eslint --fix --max-warnings=0 --no-warn-ignored {staged_files}
+      run: bun node_modules/eslint/bin/eslint.js --fix --max-warnings=0 --no-warn-ignored {staged_files}
       stage_fixed: true
     - name: prettier
-      glob: '*.{ts,mts,json,jsonc,md,yml,yaml}'
-      run: bunx prettier --write {staged_files}
+      glob: '*.{ts,mts,js,json,jsonc,md,yml,yaml}'
+      run: bun node_modules/prettier/bin/prettier.cjs --write {staged_files}
       stage_fixed: true
     - name: config-clean
       glob: 'wrangler.jsonc'
       run: bun scripts/check-placeholders.ts
+
+commit-msg:
+  jobs:
+    # {1} is the message file git hands the hook. The type list comes from the
+    # Conventional Commits specification and the scopes from
+    # .github/commit-scopes.json, both by way of commitlint.config.js.
+    - name: commitlint
+      run: bun node_modules/@commitlint/cli/cli.js --edit {1}
