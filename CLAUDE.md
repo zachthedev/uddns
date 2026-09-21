@@ -12,10 +12,9 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   than listing its steps. `check` runs, roughly cheapest first, `typecheck`, `cf-typegen:check`,
   `format:check` and `lint`. `check:all` adds the tests. A new check goes here, not into a workflow.
 - Documentation deviation, stated deliberately: no test binds a gate table to the gate's own step list,
-  because the repository publishes no such table. `CONTRIBUTING.md` names commands and never legs.
-  `tests/commit-scopes.node.test.ts` then asserts that every `bun run <script>` the guide names is
-  defined in `package.json`. A list that exists once cannot disagree with itself. Removing the
-  duplication is what defeats the drift, rather than a check that polices a second copy.
+  because the repository publishes no such table. `CONTRIBUTING.md` names commands and never legs. A
+  list that exists once cannot disagree with itself. Removing the duplication is what defeats the drift,
+  rather than a check that polices a second copy.
 - The gate is hermetic: a function of the tree and nothing else. That is what lets it run offline and mean
   the same thing against a commit from a year ago. A check whose result can change while the tree stands
   still is not hermetic and does not belong in it. Hermeticity is the property at stake rather than
@@ -86,9 +85,8 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   characters. The rules are in `commitlint.config.js`: config-conventional's types, scopes from
   `.github/commit-scopes.json`, header and body lines at 72. That JSON file is the only copy of the scope
   vocabulary, an array of `{ scope, covers }` entries. `CONTRIBUTING.md` points at it by path rather than
-  restating it, and `tests/commit-scopes.node.test.ts` binds the JSON to the rule commitlint loads, checks
-  every entry carries a scope and what it covers, and fails any document that lists the scopes again.
-  Adding a scope is one edit to the JSON.
+  restating it. `commitlint.config.js` reads the file and throws on an empty list, and the `commit-msg`
+  hook refuses a scope outside it. Adding a scope is one edit to the JSON.
 - Generated types: `bun run cf-typegen` passes `--env-file .dev.vars.template`, so the committed
   `worker-configuration.d.ts` carries the template's secret names rather than whichever ones a contributor
   keeps in their own gitignored `.dev.vars`. `cf-typegen:check` deletes the file, regenerates the whole of
