@@ -2,9 +2,6 @@
 .dev.vars
 .wrangler/
 
-# Generated deploy config (real IDs injected at deploy time)
-wrangler.deploy.jsonc
-
 # Below: github/gitignore/Node.gitignore at f5de2c2bb2c117f9ae643d6baa7acc23c580b7aa. Do not edit below this line; replace the block to update.
 # Logs
 logs

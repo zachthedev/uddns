@@ -32,9 +32,9 @@ UniFi Network Application 9.1.92+ ships native Cloudflare DDNS support (Service:
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/zachthedev/uddns)
 
 1. Click the button above.
-2. Complete the deployment.
+2. Complete the deployment. The KV namespace and the D1 audit database are created on this first deploy; `wrangler.jsonc` names the bindings and carries no resource IDs.
 3. Note the `*.workers.dev` route.
-4. Apply the D1 migrations afterwards (`bun x wrangler d1 migrations apply AUDIT_DB --remote`); the button flow provisions resources but does not run migrations, so `/history` and audit logging stay dark until you do. Options 2 and 3 handle this automatically.
+4. Apply the D1 migrations afterwards (`bun x wrangler d1 migrations apply AUDIT_DB --remote`); the button flow creates the database but does not run migrations, so `/history` and audit logging stay dark until you do. Options 2 and 3 handle this automatically.
 
 #### **Option 2: Deploy with the CLI**
 
@@ -45,31 +45,39 @@ Requires [bun](https://bun.sh).
    ```sh
    bun install
    ```
-3. Log in and run the interactive setup. It provisions the KV namespaces and
-   the D1 audit database, writes their IDs to `.env.local` (gitignored), and
-   offers to generate an access key:
+3. Log in and create the D1 audit database once. The deploy applies its
+   migrations before uploading, and the migration step resolves the database
+   by name without creating it:
    ```sh
    bun x wrangler login
-   bun run setup
+   bun x wrangler d1 create d1-uddns-audit-prod
    ```
-4. Deploy:
+4. Deploy. The KV namespace is created on this first deploy, and every later
+   deploy reuses both resources by their binding names:
    ```sh
    bun run deploy
    ```
+   On an interactive first deploy wrangler also writes the IDs it created or
+   connected into `wrangler.jsonc`. Discard that change with
+   `git checkout -- wrangler.jsonc`; the committed file binds by name.
 5. Note the `*.workers.dev` route.
+
+With more than one Cloudflare account on the login, copy `.env.local.template`
+to `.env.local` (gitignored) and set `CLOUDFLARE_ACCOUNT_ID` there. The same
+file takes `CUSTOM_DOMAIN` and `ACCESS_KEY` for local deploys.
 
 #### **Option 3: Deploy on every release with GitHub Actions**
 
-Fork this repository, run setup locally once (Option 2, steps 1 to 3), then
-create an environment named `production` under the fork's Settings. The deploy
-job declares that environment and reads everything from it. Identifiers are
-variables and only the values that grant access are secrets, so the
-identifiers stay readable in the run log. Add these environment variables:
+Fork this repository, create the D1 audit database once (Option 2, step 3),
+then create an environment named `production` under the fork's Settings. The
+deploy job declares that environment and reads everything from it. Identifiers
+are variables and only the values that grant access are secrets, so the
+identifiers stay readable in the run log. No resource ID goes anywhere: when
+the Worker already exists, wrangler reuses the KV namespace and D1 database it
+holds under the binding names in `wrangler.jsonc`, and the first deploy creates
+the KV namespace. Add these environment variables:
 
 - `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
-- `KV_NAMESPACE_ID` - Production namespace ID (from `.env.local`)
-- `KV_NAMESPACE_PREVIEW_ID` - Preview namespace ID (from `.env.local`)
-- `D1_DATABASE_ID` - Audit database ID (from `.env.local`)
 - `CUSTOM_DOMAIN` - Optional; attaches the worker to this domain instead of leaving it on its `*.workers.dev` URL
 
 And these environment secrets:
@@ -80,8 +88,7 @@ And these environment secrets:
 `ACCESS_KEY` is 32 hexadecimal characters (16 random bytes). One comes from
 `openssl rand -hex 16`, or on a machine without openssl from
 `bun -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex'))"`.
-`bun run setup` writes one of that shape to `.env.local` when you accept its
-offer. Set it with `gh secret set ACCESS_KEY --env production` from the fork's
+Set it with `gh secret set ACCESS_KEY --env production` from the fork's
 clone. The next deploy syncs it to the Worker. Then put the same value in every
 device's DDNS Username. Keep that order. The Worker refuses every other value
 the moment the deploy finishes. A device still sending one gets 401 until its
@@ -146,8 +153,9 @@ nothing.
 Notifications need no deployment configuration: callers pass their own ntfy
 target with the `ntfy=` query parameter.
 
-The committed `wrangler.jsonc` only ever contains placeholders; real IDs are
-injected at deploy time from the environment.
+The committed `wrangler.jsonc` carries no resource IDs and no domain. wrangler
+binds the KV namespace and the D1 database by name at deploy time, and the
+custom domain comes from `CUSTOM_DOMAIN` on the machine that deploys.
 
 ### 2. **Generate a Cloudflare API Token**
 

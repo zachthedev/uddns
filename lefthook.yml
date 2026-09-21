@@ -24,9 +24,6 @@ pre-commit:
       glob: '*.{ts,mts,js,json,jsonc,md,yml,yaml}'
       run: bun node_modules/prettier/bin/prettier.cjs --write {staged_files}
       stage_fixed: true
-    - name: config-clean
-      glob: 'wrangler.jsonc'
-      run: bun scripts/check-placeholders.ts
 
 commit-msg:
   jobs:
