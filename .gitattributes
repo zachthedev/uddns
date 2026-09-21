@@ -1,3 +1,3 @@
-# Line endings are the same on every machine, whatever a contributor's core.autocrlf says. The gate's
-# format check requires LF (`endOfLine` in .prettierrc), so a CRLF checkout fails it on every file.
+# One line ending on every host, whatever a contributor's core.autocrlf says: every hook and script runs
+# on every host, and Prettier's endOfLine default is lf, so a CRLF checkout fails the format check.
 * text=auto eol=lf
