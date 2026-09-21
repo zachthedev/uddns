@@ -32,7 +32,7 @@
     "@types/bun": "1.4.2",
     "@types/node": "26.6.2",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitest/coverage-istanbul": "4.1.11",
+    "@vitest/coverage-istanbul": "5.0.1",
     "eslint": "10.11.0",
     "eslint-config-prettier": "10.1.8",
     "jiti": "^2.7.0",
