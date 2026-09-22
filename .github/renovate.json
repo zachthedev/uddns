@@ -1,67 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": [
-    "Every dependency this repository pins, and the rules that move them.",
-    "The workflow .github/workflows/dependency-updates.yml runs Renovate; this file decides what it proposes.",
-    "Cooldown is three days on every datasource, and internalChecksFilter strict keeps a younger version from opening a pull request at all.",
-    "bunfig.toml carries the same three days for bun's own resolution, which Renovate delegates to when it rewrites bun.lock.",
-    "rebaseWhen conflicted: main requires one code-owner approval and dismisses a review on every push, so a rebase Renovate did not have to make would throw the approval away. A branch behind main still merges once its own required checks pass."
-  ],
-  "timezone": "UTC",
-  "schedule": ["* 0-11 * * 1"],
-  "minimumReleaseAge": "3 days",
-  "minimumReleaseAgeBehaviour": "timestamp-required",
-  "internalChecksFilter": "strict",
-  "semanticCommits": "enabled",
-  "semanticCommitType": "chore",
-  "semanticCommitScope": "deps",
-  "commitMessageAction": "bump",
-  "commitMessageTopic": "{{depName}}",
-  "labels": ["dependencies"],
-  "prHourlyLimit": 0,
-  "prConcurrentLimit": 10,
-  "dependencyDashboard": true,
-  "rebaseWhen": "conflicted",
-  "vulnerabilityAlerts": {
-    "description": "A security fix skips the schedule and the cooldown, the way Dependabot security updates do. Its commit type comes from what is in the group, so a runtime dependency cuts a release and a development one does not. The null cooldown is Renovate's own default for this object, written out so the one exemption from the three-day wait sits beside the group it applies to.",
-    "minimumReleaseAge": null,
-    "groupName": "security",
-    "commitMessageSuffix": "",
-    "addLabels": ["security"]
-  },
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "The scanner image the trufflehog action runs, pinned by tag and digest beside the action. Scoped to ci.yml, and the leading space keeps it off any other key ending in version, such as renovate-version.",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
-      "matchStrings": ["[ ]version: (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"],
-      "depNameTemplate": "trufflesecurity/trufflehog",
-      "datasourceTemplate": "docker"
-    },
-    {
-      "customType": "regex",
-      "description": "The Renovate image this repository's own workflow runs. The lookup is Docker Hub, because Renovate's docker datasource reads a release timestamp only from there. Setting minimumReleaseAgeBehaviour to timestamp-required then holds back any candidate whose timestamp it cannot establish. Both registries publish the same manifest digest, so the pin is the same either way.",
-      "managerFilePatterns": ["/^\\.github/workflows/dependency-updates\\.yml$/"],
-      "matchStrings": [
-        "renovate-version: (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
-      ],
-      "depNameTemplate": "renovate/renovate",
-      "datasourceTemplate": "docker"
-    }
-  ],
+  "extends": ["github>zachthedev/.github//renovate/bun-service"],
   "packageRules": [
-    {
-      "description": "A runtime dependency changes what the deployed Worker contains, so it is a fix and release-please cuts a release for it.",
-      "matchManagers": ["bun"],
-      "matchDepTypes": ["dependencies"],
-      "semanticCommitType": "fix"
-    },
-    {
-      "description": "One weekly pull request for the whole Bun tree, so packages that pin each other move together.",
-      "matchManagers": ["bun"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "bun"
-    },
     {
       "description": "The plugin pins wrangler exactly, and a split leaves two wranglers in the tree. Major updates join this group rather than splitting off.",
       "matchDepNames": ["wrangler", "@cloudflare/vitest-plugin"],
@@ -70,48 +10,10 @@
       "semanticCommitType": "chore"
     },
     {
-      "description": "typescript-eslint declares a typescript peer range below 6.1.0 and throws on a TypeScript 7 tree, so typescript stays on 6.x. The @typescript/native alias runs TypeScript 7 and is not held. Drop this rule once typescript-eslint supports TypeScript 7: https://typescript-eslint.io/users/dependency-versions",
+      "description": "typescript-eslint declares a typescript peer range below 6.1.0 and throws on a TypeScript 7 tree, so typescript stays on 6.x. Drop this rule once typescript-eslint supports TypeScript 7: https://typescript-eslint.io/users/dependency-versions",
       "matchDepNames": ["typescript"],
       "matchUpdateTypes": ["major"],
       "enabled": false
-    },
-    {
-      "description": "Actions move as one pull request, and a workflow change is a ci commit.",
-      "matchManagers": ["github-actions", "custom.regex"],
-      "semanticCommitType": "ci",
-      "addLabels": ["ci"]
-    },
-    {
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      "groupName": "github actions"
-    },
-    {
-      "description": "The action and the image it runs carry the same release, and a ci step fails when they disagree, so they move in one pull request.",
-      "matchDepNames": ["trufflesecurity/trufflehog"],
-      "groupName": "trufflehog",
-      "separateMajorMinor": false
-    },
-    {
-      "description": "The action composes its image from renovate-version, which carries the tag and the digest together. That is not a version any datasource can read, so the custom manager above owns this pin.",
-      "matchManagers": ["github-actions"],
-      "matchDepTypes": ["uses-with"],
-      "matchDepNames": ["ghcr.io/renovatebot/renovate"],
-      "enabled": false
-    },
-    {
-      "description": "Renovate updates its own image, as one pull request whatever the bump size. The workflow is a ci file, so the commit is a ci commit.",
-      "matchDepNames": ["renovate/renovate"],
-      "groupName": "renovate",
-      "separateMajorMinor": false,
-      "semanticCommitType": "ci",
-      "addLabels": ["ci"]
     }
-  ],
-  "lockFileMaintenance": {
-    "description": "Refreshes every lock file weekly, which is the only thing that moves a transitive dependency. Renovate cannot apply the cooldown to this update type, so bunfig.toml is what holds bun back here. A fix, because the Worker bundles its dependency tree, and a refresh that cuts no release leaves production on the old one.",
-    "enabled": true,
-    "schedule": ["* 0-11 * * 1"],
-    "semanticCommitType": "fix"
-  }
+  ]
 }
