@@ -1,0 +1,100 @@
+name: cd
+
+# Everything after a merge. A push to main keeps the release pull request open, and merging that
+# pull request makes the next push tag the merge commit and draft the release. publish flips the
+# draft public under the release environment's reviewer, and the deploy follows the flip, so the
+# schema in production corresponds to a revision anyone can check out. A manual run deploys a
+# revision without releasing one.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  # The called job runs in the release-pr environment and mints its token from that
+  # environment's RELEASER_CLIENT_ID and RELEASER_PRIVATE_KEY. This job runs in no environment, so
+  # it cannot pass an environment secret by name; inherit is the one form that reaches it.
+  release-pr:
+    if: github.event_name == 'push'
+    # On the job, not the workflow: two pushes in a row must not race over the release pull
+    # request, and cancel-in-progress would abandon a half-written one.
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
+    uses: zachthedev/.github/.github/workflows/release-pr.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+
+  # uddns ships no artifact, so artifacts is omitted and the called job flips the draft public
+  # and nothing else. The release environment's required reviewer is the human approval before a
+  # release goes public.
+  publish:
+    needs: release-pr
+    if: needs.release-pr.outputs.released == 'true'
+    uses: zachthedev/.github/.github/workflows/publish.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    with:
+      tag: ${{ needs.release-pr.outputs.tag }}
+      flip: true
+
+  # Runs after the flip on a release, or alone on a manual run. A manual run takes any ref, and
+  # a revision that never passed a pull request is the owner's act.
+  deploy:
+    needs: [release-pr, publish]
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (needs.release-pr.outputs.released == 'true' && needs.publish.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Named so the deploy shows up as a deployment, carries protection rules, and holds the
+    # values the deploy reads: identifiers as variables, the two access-granting values as
+    # secrets. Both paths into production run through here.
+    environment: production
+    # The deploy applies D1 migrations, which read the applied-migrations table and then write:
+    # two overlapping runs can each see the same migration as pending, and the later upload
+    # decides which revision production ends up on.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          # Pinned to packageManager, so the revision that reached production
+          # was built by the bun the lockfile was resolved with.
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # scripts/deploy.ts is the single deploy path: it applies D1 migrations,
+      # deploys the committed wrangler.jsonc, and syncs the optional ACCESS_KEY
+      # worker secret. Local deploys run the same script. No resource ID is
+      # read anywhere: wrangler reuses the KV namespace and D1 database the
+      # deployed Worker holds under the binding names in wrangler.jsonc.
+      #
+      # Only the two values that grant access are secrets. The two identifiers
+      # are environment variables, so they stay readable in the run log rather
+      # than masked, and an unset one arrives as an empty string. CUSTOM_DOMAIN
+      # and ACCESS_KEY are optional: an empty domain leaves the Worker on its
+      # workers.dev URL and an empty access key skips the secret sync.
+      - name: Deploy Worker
+        run: bun run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+          ACCESS_KEY: ${{ secrets.ACCESS_KEY }}

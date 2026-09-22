@@ -11,52 +11,6 @@ on:
     branches: [main]
 
 jobs:
-  # First in the file so a message problem is the first failure a contributor
-  # sees. It needs nothing and nothing needs it.
-  commits:
-    name: Commit Messages
-    runs-on: ubuntu-latest
-    # Every step below reads `github.event.pull_request`, which a push to main
-    # does not carry. No author is excused: a release commit is a one-line
-    # `chore(main): release x.y.z`, and the changelog goes to CHANGELOG.md and
-    # the pull request body, neither of which commitlint reads.
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # commitlint walks base..head, so the range has to be present. A
-          # shallow clone leaves it with nothing to read.
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # A rebase merge lands these subjects unchanged, so they are linted as
-      # written. A squash merge discards them for the subject below.
-      - name: Lint the pull request commits
-        run: bun node_modules/@commitlint/cli/cli.js --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
-
-      # A squash merge builds the subject from the title with the number
-      # appended, so composing the two lints the string that reaches main
-      # rather than the shorter one a reviewer reads. Both values arrive
-      # through the environment and reach commitlint on stdin, so neither is
-      # ever a shell word.
-      - name: Lint the squash subject
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: printf '%s (#%s)' "$PR_TITLE" "$PR_NUMBER" | bun node_modules/@commitlint/cli/cli.js --verbose
-
   # The gate a contributor runs locally, called and never restated, so the two
   # cannot drift. bun run check:rows prints what it covers. It asserts mise.lock
   # against mise.toml, then installs the tools, then runs every check, in that
@@ -108,40 +62,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  # An advisory is a function of the world rather than of the tree, so it
-  # cannot sit in the gate. A pull request is where blocking is right: the
-  # fix is a version bump and the author is here to make it. audit.yml runs
-  # the same command daily as a report. This job is replaced by the reusable
-  # dependency-review workflow when the shared workflows land.
-  audit:
-    name: Audit dependencies
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # bun audit reads bun.lock, so this job needs bun but not an install.
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: package.json
-
-      # The audit's verdict is a claim about an external database, and a clean
-      # verdict names no endpoint. bun audit has no --registry flag, and this
-      # variable outranks a project bunfig.toml and a .env, so setting it on
-      # the step fixes the endpoint against the environment, a bunfig and a
-      # dotenv at once.
-      - name: Audit dependencies
-        env:
-          BUN_CONFIG_REGISTRY: https://registry.npmjs.org/
-        run: bun run audit
-
   # Runs in CI alone: the scan needs the pull request's base and head commits
   # and the official action, which no working machine has. GitHub push
   # protection covers provider patterns; trufflehog adds its own detectors and
@@ -170,3 +90,25 @@ jobs:
           # input, which defaults to latest. Pinning the SHA above fixes only
           # the action's own script, so the image is pinned here by digest.
           version: 3.97.5@sha256:1cec88f18ca39e26e04e61fe9d886c9c4e5f2fc0ba4f2ed185cac0722bd8a076
+
+  # The three shared checks, called from zachthedev/.github at a release SHA. Each header
+  # names its inputs; the pin moves through Renovate's zachthedev group with no cooldown.
+  commits:
+    uses: zachthedev/.github/.github/workflows/commits.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
+    permissions:
+      contents: read
+
+  workflows:
+    uses: zachthedev/.github/.github/workflows/workflows.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
+    permissions:
+      contents: read
+
+  # Blocks on what a pull request adds against its base, and on what a release adds against
+  # the last tag, at high severity. Under Bun it sees the exactly pinned direct packages and
+  # the actions, not bun.lock's transitives; the audit workflow reports on those daily.
+  # allow-ghsas stays empty; a waiver is a GHSA id here with a comment naming the advisory,
+  # what it blocks, why shipping is safer and what removes it (CONTRIBUTING.md#dependencies).
+  dependency-review:
+    uses: zachthedev/.github/.github/workflows/dependency-review.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
+    permissions:
+      contents: read

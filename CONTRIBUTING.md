@@ -44,11 +44,18 @@ Checks that run in CI and not in the gate, each with the reason it sits outside:
   request does.
 - `Secret scan` runs trufflehog over the pull request's base and head commits with the official action,
   which no working machine has.
-- `Audit dependencies` runs `bun audit` over `bun.lock`. An advisory is a function of the world rather than
-  of the tree, so the same commit passes today and fails tomorrow with nothing changed; that is not a gate
-  row. A pull request is where blocking is right, because the fix is a version bump and the author is there
-  to make it. [Dependencies](#dependencies) says what the audit covers and how a finding is cleared.
-- CodeQL is GitHub's analysis and runs on GitHub.
+- `workflows` runs actionlint and zizmor online over `.github/workflows` from the shared workflow, so
+  zizmor's advisory and stale-ref audits read GitHub with the job's token on every pull request, whatever
+  the contributor's machine holds.
+- `dependency-review` compares the dependency manifests against the pull request's base. An advisory is a
+  function of the world rather than of the tree, so the same commit passes today and fails tomorrow with
+  nothing changed; that is not a gate row. A pull request is where blocking is right, because the fix is a
+  version bump and the author is there to make it. [Dependencies](#dependencies) says what it covers and
+  how a finding is cleared.
+- `codeql` is GitHub's analysis and runs on GitHub.
+
+`commits`, `workflows`, `dependency-review` and `codeql` are the reusable workflows in
+[zachthedev/.github](https://github.com/zachthedev/.github), pinned by commit in `ci.yml` and `codeql.yml`.
 
 ## Commit messages
 
@@ -137,18 +144,18 @@ range admits 7, move `typescript` to 7.x and drop the alias.
 
 The advisory legs:
 
-- `Audit dependencies` in `ci.yml` runs `bun audit --audit-level=high` over the whole of `bun.lock`,
-  transitives included, on every pull request and push to `main`, and blocks. It fails closed: when it
-  cannot reach the advisory endpoint it stays red until the outage clears, so somebody else's registry
-  incident is a blocked merge here. That is chosen rather than overlooked. A finding prints JSON keyed by
-  package name, while an unreachable endpoint prints nothing to stdout and errors to stderr, so empty
-  stdout with a non-zero exit identifies an outage exactly and a wrapper could fail open on that one
-  case. Anyone reweighing this starts there.
-- The `audit` workflow runs the same command once a day as a report. It never blocks a deploy: uddns is a
-  deployed service, so blocking would not remove the vulnerable code from production, and every unrelated
-  fix would queue behind the block. Between an advisory landing and a fix, the worker runs vulnerable code,
-  and the daily run is the only thing that says so. A red run is work to pick up.
-- Dependabot alerts stay on, security updates off; Renovate opens the fix.
+- The `dependency-review` check in `ci.yml` blocks a pull request on what it adds against its base, and a
+  release pull request on what the release adds against the last tag, at high severity. Under Bun it sees
+  the exactly pinned direct packages in `package.json` and the actions in the workflows, and not
+  `bun.lock`'s transitives.
+- The `audit` workflow runs `bun audit --audit-level=high` over the whole of `bun.lock`, transitives
+  included, once a day as a report. It never blocks a merge or a deploy: uddns is a deployed service, so
+  blocking would not remove the vulnerable code from production, and every unrelated fix would queue behind
+  the block. Between an advisory landing and a fix, the worker runs vulnerable code, and the daily run is
+  the only thing that says so. A red run is work to pick up. It fails closed: when it cannot reach the
+  advisory endpoint it stays red until the outage clears.
+- Dependabot alerts stay on, security updates off; Renovate opens the fix for a direct dependency, and a
+  transitive is fixed by hand as below.
 
 Clearing a finding, in order:
 
@@ -161,12 +168,13 @@ Clearing a finding, in order:
    the state to return to: on every dependency bump, delete the override, re-resolve, and keep it deleted
    when the audit stays clean. Never `bun update <package>` on a transitive; Bun reads the name as a new
    direct dependency.
-3. If no fix is published, or the vulnerable path is unreachable from this worker, waive it: add
-   `--ignore <GHSA-id>` to the `audit` script in `package.json`, and in the same commit a comment beside the
-   `Audit dependencies` job in `ci.yml` naming the advisory, what it affects here, why shipping is safer
-   than not shipping, and what removes the exception. `package.json` takes no comments, so the workflow
-   carries the record and the flag points at it by ID. A flag with no record is an unreviewed suppression.
-   A waiver is never for making a red check green.
+3. If no fix is published, or the vulnerable path is unreachable from this worker, waive it: add the GHSA
+   id to `allow-ghsas` on the `dependency-review` job in `ci.yml` with a comment beside it naming the
+   advisory, what it affects here, why shipping is safer than not shipping, and what removes the
+   exception, and in the same commit add `--ignore <GHSA-id>` to the `audit` script in `package.json` so
+   the daily report stays readable. `package.json` takes no comments, so the workflow carries the record
+   and the flag points at it by ID. A flag with no record is an unreviewed suppression. A waiver is never
+   for making a red check green.
 
 ## Releases
 
@@ -191,8 +199,9 @@ still holds, so the number states stability rather than defaulting to it. Being 
 `feat!` its meaning: below 1.0.0, release-please treats a breaking change as a minor bump, so the marker
 cannot signal a break at all.
 
-Publishing is release-please's: the GitHub Release is published as the tag is created, and the deploy
-runs from it.
+Publishing is a human step. release-please creates the tag and a draft release; the `publish` job in
+`cd.yml` waits for the `release` environment's reviewer and then flips the draft public, and the deploy
+follows the flip. A draft that is never approved ships nothing, and a failed release is the next version.
 
 ## What never happens
 

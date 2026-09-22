@@ -55,7 +55,7 @@ when the environment carries one. The custom domain, when set, reaches wrangler 
 
 Fork this repository, create the D1 audit database once (the CLI path, step 2), then create an
 environment named `production` under the fork's Settings. The deploy job in
-[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) declares that environment and reads
+[`.github/workflows/cd.yml`](../.github/workflows/cd.yml) declares that environment and reads
 everything from it: the job's `env:` block names each value and says whether it is a variable or a
 secret. Identifiers are variables and only the values that grant access are secrets, so the identifiers
 stay readable in the run log. No resource ID goes anywhere.
@@ -89,19 +89,19 @@ landed last.
 [release-please](https://github.com/googleapis/release-please) drives it. Once a releasable change lands
 on `main`, it opens one pull request titled `chore(main): release x.y.z` and keeps it up to date, carrying
 the version bump and the changelog entries for everything landed since the last release. Nothing ships
-while it sits there. Merging it is the release: the merge commit is tagged, the GitHub Release is
-published, and the deploy runs against that revision. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) says
-which commit types make a change releasable.
+while it sits there. Merging it is the release: the merge commit is tagged and a draft release is
+created, the `publish` job waits for the `release` environment's reviewer and flips the draft public,
+and the deploy runs against that revision. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) says which
+commit types make a change releasable.
 
 The release pull request is opened by the `zachthedev-releaser` app, so it gets the same checks as every
 other pull request. That is what the app is for: GitHub holds the CI run for a pull request opened by
 `GITHUB_TOKEN` at `action_required` with no jobs, until somebody approves it by hand. No check is waived
-for it. The release workflow also runs `bun run check` against the push to `main`, ahead of the tag and
-the GitHub Release, neither of which can be withdrawn once published.
+for it, and the pull request's own gate run is what judged the merge.
 
-The deploy workflow answers to a call and a manual run, with no tag trigger, so the release workflow
-calls it directly and a tag pushed by hand deploys nothing. The manual run deploys a revision without
-releasing one; a revision that never passed a pull request is the owner's act.
+`cd.yml` answers to a push to `main` and to a manual run, with no tag trigger, so a tag pushed by hand
+deploys nothing. The manual run deploys a revision without releasing one; a revision that never passed a
+pull request is the owner's act.
 
 ## Operating it
 
