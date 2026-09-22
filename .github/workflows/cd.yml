@@ -5,6 +5,12 @@ name: cd
 # draft public under the release environment's reviewer, and the deploy follows the flip, so the
 # schema in production corresponds to a revision anyone can check out. A manual run deploys a
 # revision without releasing one.
+#
+# No job here runs the gate. What keeps a red tree off main is the main ruleset's required
+# checks, which name the gate and the shared checks a pull request reports, and what keeps a tag
+# off any other commit is the tag ruleset with the releaser app as its one bypass actor. Both are
+# repository settings, not steps, so a manual run of a revision main does not carry is the
+# owner's act and nothing here re-checks it.
 on:
   push:
     branches: [main]
@@ -33,6 +39,8 @@ jobs:
     needs: release-pr
     if: needs.release-pr.outputs.released == 'true'
     uses: zachthedev/.github/.github/workflows/publish.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
+    # The three the callee's header asks for. id-token and attestations serve the attest step,
+    # which an artifact-less call skips, and a called job refuses a caller passing less.
     permissions:
       contents: write
       id-token: write
