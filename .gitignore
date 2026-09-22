@@ -2,6 +2,10 @@
 .dev.vars
 .wrangler/
 
+# What Claude Code writes locally
+.claude/worktrees/
+.claude/settings.local.json
+
 # Changed from the template: `!.env.local.template` added beside `!.env.example`.
 # Below: github/gitignore/Node.gitignore at f5de2c2bb2c117f9ae643d6baa7acc23c580b7aa.
 # Logs
