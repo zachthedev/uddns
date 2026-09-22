@@ -1,28 +1,25 @@
 # Git hooks, installed by `lefthook install` (runs automatically via the
 # package.json prepare script on bun install).
 #
-# Every job resolves its tool from an installed node_modules and fails when
-# none is present, so the version that runs is the one package.json pins and
-# nothing is fetched at commit time. git resolves hooks through the common
-# directory, so these run in linked worktrees where a package may not be
-# installed at all.
+# Every job resolves its tool with `bunx --no-install`, which stops at the
+# installed package and exits 1 with none rather than fetching one, so the
+# version that runs is the one package.json pins. git resolves hooks through
+# the common directory, so these run in linked worktrees where a package may
+# not be installed at all.
 
 pre-commit:
   jobs:
     # Order matters: lint fixes land before formatting, and both re-stage
-    # their changes via stage_fixed. Each tool is the package's JavaScript
-    # entry point run under bun by path, because node_modules/.bin holds only
-    # .exe and .bunx shims on Windows and a bare node_modules/.bin/<tool> does
-    # not resolve there.
+    # their changes via stage_fixed.
     - name: eslint
       glob: '*.{ts,mts,js}'
       # --no-warn-ignored: staged files passed explicitly may be in the
       # eslint ignore list (generated worker-configuration.d.ts)
-      run: bun node_modules/eslint/bin/eslint.js --fix --max-warnings=0 --no-warn-ignored {staged_files}
+      run: bunx --no-install eslint --fix --max-warnings=0 --no-warn-ignored {staged_files}
       stage_fixed: true
     - name: prettier
       glob: '*.{ts,mts,js,json,jsonc,md,yml,yaml}'
-      run: bun node_modules/prettier/bin/prettier.cjs --write {staged_files}
+      run: bunx --no-install prettier --write {staged_files}
       stage_fixed: true
 
 commit-msg:
@@ -30,8 +27,6 @@ commit-msg:
     # {1} is the message file git hands the hook. The type list comes from the
     # Conventional Commits specification and the scopes from
     # .github/commit-scopes.json, both by way of commitlint.config.js.
-    # --no-install stops bunx at the installed package: with none it exits 1
-    # rather than fetching one.
     - name: commitlint
       run: bunx --no-install commitlint --edit {1}
 
