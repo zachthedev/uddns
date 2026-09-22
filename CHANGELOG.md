@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [1.0.3](https://github.com/zachthedev/uddns/compare/v1.0.2...v1.0.3) (2026-09-22)
+
+
+### Documentation
+
+* state the ACCESS_KEY shape and how to make and set one ([#226](https://github.com/zachthedev/uddns/issues/226)) ([dda962c](https://github.com/zachthedev/uddns/commit/dda962c8a51dd6d9b035902128f77b26cb70378e))
+
 ## [1.0.2](https://github.com/zachthedev/uddns/compare/v1.0.1...v1.0.2) (2026-09-19)
 
 
