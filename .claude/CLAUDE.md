@@ -1,9 +1,9 @@
 # Claude Code in this repository
 
-Everything a contributor needs is in the human-facing files, and the root [CLAUDE.md](../CLAUDE.md)
+Everything a contributor needs is in the human-facing files, and the root [AGENTS.md](../AGENTS.md)
 carries the rest. This one only points at them.
 
-Read [CONTRIBUTING.md](../CONTRIBUTING.md) and the root [CLAUDE.md](../CLAUDE.md) before changing
+Read [CONTRIBUTING.md](../CONTRIBUTING.md) and the root [AGENTS.md](../AGENTS.md) before changing
 anything.
 
 ## The rules that do not bend
@@ -25,11 +25,13 @@ anything.
 
 ## The documentation
 
-| File                                                            | Holds                                                                  |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [CLAUDE.md](../CLAUDE.md)                                       | The gate's composition, the audit policy, generated types and naming   |
-| [CONTRIBUTING.md](../CONTRIBUTING.md)                           | Setup, the gate, commit messages, scopes and pull requests             |
-| [README.md](../README.md)                                       | What the worker does, deploying it, the URL contract, history and cost |
-| [docs/faq.md](../docs/faq.md)                                   | The setup mistakes a device or a token makes, each with its fix        |
-| [docs/dependency-overrides.md](../docs/dependency-overrides.md) | Advisory waivers, and re-resolving before pinning anything             |
-| [SECURITY.md](../SECURITY.md)                                   | What counts as a vulnerability, and how to report one                  |
+| File                                  | Holds                                                                 |
+| ------------------------------------- | --------------------------------------------------------------------- |
+| [AGENTS.md](../AGENTS.md)             | The gate's composition, the audit policy and generated types          |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | The gate, commit messages, where code goes, dependencies and releases |
+| [README.md](../README.md)             | What the worker does, and the documentation table indexing the rest   |
+| [docs/dev.md](../docs/dev.md)         | Prerequisites, the first run, running it locally and generated files  |
+| [docs/deploy.md](../docs/deploy.md)   | Deploying to your own account, how a release deploys, operating it    |
+| [docs/usage.md](../docs/usage.md)     | The token, the device entry, the URL contract and audit history       |
+| [docs/faq.md](../docs/faq.md)         | The setup mistakes a device or a token makes, each with its fix       |
+| [SECURITY.md](../SECURITY.md)         | What counts as a vulnerability, and how to report one                 |

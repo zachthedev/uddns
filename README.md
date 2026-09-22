@@ -23,225 +23,24 @@ A Cloudflare Worker that lets UniFi OS devices (UDM and UXG series) dynamically 
 
 UniFi Network Application 9.1.92+ ships native Cloudflare DDNS support (Service: Cloudflare, with hostname, zone name, and API token). If all you need is one hostname following your WAN IP, use that. This worker exists for everything the native client doesn't do: the feature list above.
 
-## 🚀 **Setup Overview**
+## Setup
 
-### 1. **Deploy the Cloudflare Worker**
+Three steps, each in its own document.
 
-#### **Option 1: Click to Deploy**
+1. Deploy the worker to your Cloudflare account: with the button, from the CLI, or from a fork on every
+   release. [docs/deploy.md](docs/deploy.md) has all three.
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/zachthedev/uddns)
+   [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/zachthedev/uddns)
 
-1. Click the button above.
-2. Complete the deployment. The KV namespace and the D1 audit database are created on this first deploy; `wrangler.jsonc` names the bindings and carries no resource IDs.
-3. Note the `*.workers.dev` route.
-4. Apply the D1 migrations afterwards (`bun x wrangler d1 migrations apply AUDIT_DB --remote`); the button flow creates the database but does not run migrations, so `/history` and audit logging stay dark until you do. Options 2 and 3 handle this automatically.
+2. Create a Cloudflare API token scoped to the zones the worker updates.
+3. Point each UniFi device's Dynamic DNS entry at the worker. The Server field is the worker's URL
+   contract, and [docs/usage.md](docs/usage.md) spells out every parameter it takes, the token's scopes,
+   and the audit history a caller can read back.
 
-#### **Option 2: Deploy with the CLI**
-
-Requires [bun](https://bun.sh).
-
-1. Clone this repository.
-2. Install dependencies:
-   ```sh
-   bun install
-   ```
-3. Log in and create the D1 audit database once. The deploy applies its
-   migrations before uploading, and the migration step resolves the database
-   by name without creating it:
-   ```sh
-   bun x wrangler login
-   bun x wrangler d1 create d1-uddns-audit-prod
-   ```
-4. Deploy. The KV namespace is created on this first deploy, and every later
-   deploy reuses both resources by their binding names:
-   ```sh
-   bun run deploy
-   ```
-   On an interactive first deploy wrangler also writes the IDs it created or
-   connected into `wrangler.jsonc`. Discard that change with
-   `git checkout -- wrangler.jsonc`; the committed file binds by name.
-5. Note the `*.workers.dev` route.
-
-With more than one Cloudflare account on the login, copy `.env.local.template`
-to `.env.local` (gitignored) and set `CLOUDFLARE_ACCOUNT_ID` there. The same
-file takes `CUSTOM_DOMAIN` and `ACCESS_KEY` for local deploys.
-
-#### **Option 3: Deploy on every release with GitHub Actions**
-
-Fork this repository, create the D1 audit database once (Option 2, step 3),
-then create an environment named `production` under the fork's Settings. The
-deploy job declares that environment and reads everything from it. Identifiers
-are variables and only the values that grant access are secrets, so the
-identifiers stay readable in the run log. No resource ID goes anywhere: when
-the Worker already exists, wrangler reuses the KV namespace and D1 database it
-holds under the binding names in `wrangler.jsonc`, and the first deploy creates
-the KV namespace. Add these environment variables:
-
-- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
-- `CUSTOM_DOMAIN` - Optional; attaches the worker to this domain instead of leaving it on its `*.workers.dev` URL
-
-And these environment secrets:
-
-- `CLOUDFLARE_API_TOKEN` - API token with Workers Scripts, Workers KV, and D1 edit permissions
-- `ACCESS_KEY` - Optional; locks the worker to callers that present it
-
-`ACCESS_KEY` is 32 hexadecimal characters (16 random bytes). One comes from
-`openssl rand -hex 16`, or on a machine without openssl from
-`bun -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex'))"`.
-Set it with `gh secret set ACCESS_KEY --env production` from the fork's
-clone. The next deploy syncs it to the Worker. Then put the same value in every
-device's DDNS Username. Keep that order. The Worker refuses every other value
-the moment the deploy finishes. A device still sending one gets 401 until its
-Username changes.
-
-Releases then deploy, and pushes do not. Deploys apply the D1 migrations, so
-tying one to a release means the schema in production corresponds to a revision
-you can check out, instead of to whichever commit landed last.
-
-[release-please](https://github.com/googleapis/release-please) drives it. Once a
-releasable change lands on `main`, it opens one pull request titled
-`chore(main): release x.y.z` and keeps it up to date, carrying the version bump
-and the changelog entries for everything landed since the last release. Nothing
-ships while it sits there. Merging it is the release: the merge commit is
-tagged, the GitHub Release is published, and the deploy runs against that
-revision.
-
-So the release cadence is yours. Land as many changes as you like, then merge
-the release pull request when you want a version. Version numbers come from the
-[Conventional Commits](https://www.conventionalcommits.org/) in the range. A
-`!` or a `BREAKING CHANGE:` footer gives a major and a `feat:` gives a minor.
-Every other type that appears in the changelog gives a patch: `fix`, `perf`,
-`build`, and `revert`. The types kept out of the changelog (`chore`, `ci`,
-`docs`, `style`, `refactor`, `test`) release nothing at all, so a `main`
-carrying only those has no release pull request open.
-
-Hiding a type in `release-please-config.json` is what does that. release-please
-renders the changelog body first, and opens no release pull request when it
-comes out empty. So hiding decides releasability, not presentation.
-
-`.github/renovate.json` steers by that switch when it picks a commit type. A
-runtime dependency and the weekly lock refresh land as `fix` and ship. A
-development dependency, a wrangler bump and an action bump land as `chore` or
-`ci` and do not. Unhiding one of those types would put its commits back in the
-body, so each would cut a release and deploy.
-
-The version started at 1.0.0 rather than 0.x, deliberately. The Worker's
-interface is its URL contract: the query parameters a UniFi device sends and
-the JSON it gets back. That contract was settled at v1.0.0 and still holds, so
-the number states stability rather than defaulting to it.
-
-Being at 1.x is also what gives `feat!` its meaning. Below 1.0.0, release-please
-treats a breaking change as a minor bump, so the marker cannot signal a break at
-all.
-
-Use the Deploy workflow's manual run to deploy a revision without releasing one.
-
-These mechanics are worth knowing. The release pull request is opened by the
-`zachthedev-releaser` app, so it gets the same checks as every other pull
-request. That is what the app is for: GitHub holds the CI run for a pull
-request opened by `GITHUB_TOKEN` at `action_required` with no jobs, until
-somebody approves it by hand. No check is waived for it, commit message linting
-included: a release commit is a one-line `chore(main): release x.y.z`, and the
-changelog goes to `CHANGELOG.md` and the pull request body. The Release workflow
-also runs `bun run check` against the push to main, ahead of the tag and the
-GitHub Release, neither of which can be withdrawn once published.
-
-The Deploy workflow answers to a call and a manual run, with no tag trigger, so
-the Release workflow calls it directly and a tag pushed by hand deploys
-nothing.
-
-Notifications need no deployment configuration: callers pass their own ntfy
-target with the `ntfy=` query parameter.
-
-The committed `wrangler.jsonc` carries no resource IDs and no domain. wrangler
-binds the KV namespace and the D1 database by name at deploy time, and the
-custom domain comes from `CUSTOM_DOMAIN` on the machine that deploys.
-
-### 2. **Generate a Cloudflare API Token**
-
-1. Go to the [Cloudflare Dashboard](https://dash.cloudflare.com/).
-2. Navigate to **Profile > API Tokens**
-3. Create a custom token with **Zone → Zone → Read** and **Zone → DNS → Edit** (the worker lists your zones to find each hostname's record, so DNS Edit alone is not enough).
-4. Scope the token to the zone(s) you want to update. One zone keeps the blast radius small; multiple zones are supported, but each hostname must match exactly one record across them.
-5. Save the token securely.
-
-### 3. **Configure UniFi OS**
-
-1. Log in to your [UniFi OS Controller](https://unifi.ui.com/).
-2. Go to **Settings > Internet > WAN > Dynamic DNS**.
-3. Create New Dynamic DNS with the following information:
-   - **Service:** `custom`
-   - **Hostname:** `subdomain.example.com` or `example.com`
-   - **Username:** Your `ACCESS_KEY` if you configured one (recommended); any value otherwise (the field is never used for Cloudflare authentication). [Option 3](#option-3-deploy-on-every-release-with-github-actions) says what shape the key has and how to set it
-   - **Password:** Cloudflare User API Token scoped to DNS edit _(not an Account API Token)_
-   - **Server:** `<worker-name>.<worker-subdomain>.workers.dev/update?ip4=%i&ip6=auto&hostnames=%h`
-     _(Omit `https://`. Comma-separate to update several records at once: `hostnames=example.com,*.example.com`. A request carries up to 40 records, and each hostname counts once per IP family, so 40 hostnames with `ip4` alone or 20 with both. Batches near that size need the paid Workers plan; the free plan's 50-subrequest ceiling fits roughly six records. `ip4`/`ip6` each accept a literal address or `auto`, which uses the connecting IP when it matches that family and skips the slot otherwise; provide at least one. Optional `zone=example.com` restricts matching to one zone. Optional `ntfy=` sends change notifications to your ntfy server, pasted raw: `ntfy=https://ntfy.sh/my-topic`. Do not percent-encode it; inadyn treats `%` sequences as its own substitution variables.)_
-
-## 📜 **Audit History**
-
-Every DNS change (and every no-op touch of the API) is recorded in D1 with timestamp, hostname, record type, previous and new IP, caller IP, and outcome. Query your own history (scoped to the API token you authenticate with):
-
-```sh
-curl -H "Authorization: Bearer <api-token>" -H "X-Access-Key: <access-key-if-set>" \
-  "https://<worker-url>/history?limit=50&hostname=example.com"
-```
-
-Cache fast-path hits are not recorded; only requests that reached the DNS API produce events.
-
-Pages are capped at 1000 events. The response carries `data.cursor`, and passing it back as `before=`
-continues from where the page ended; it is `null` on the last page. Treat the value as opaque and pass it
-verbatim, and keep `hostname=` fixed across a walk, since the cursor is a position in the result set the
-page came from. `data.refusedToday` below rides on the first page only, since it describes the day rather
-than the page.
-
-The cursor embeds the audit row's id, which is a table-wide sequence. On a deployment several people share,
-that lets one of them read the total number of audit rows written before their own, and polling it times
-the others' activity. It is aggregate volume, never row contents, and a deployment serving one household
-leaks nothing to itself. Signing the cursor would close it, and that needs a deployment secret this worker
-does not require: `ACCESS_KEY` is optional, and the deployments that leave it unset are the shared ones
-where this matters.
-
-The response also carries `data.refusedToday`: the times this token reached past its own authority today,
-UTC, and the names it reached for.
-
-```json
-{ "total": 47, "distinct": 2, "hostnames": ["typo.example.net", "old.example.net"] }
-```
-
-Reaching past authority means a hostname no zone on the token could hold, or a `zone=` naming a zone it
-cannot see. A record you have not created yet is **not** counted, nor is a token missing the Zone Read
-scope, nor is a token that sees no zones at all: those are setup steps, and counting them would bury the
-signal under every new user's first afternoon. The `hostnames` list is your own, so it names exactly which
-of your entries to fix. It carries 50 of them, the last to be seen for the first time, since a name refused
-again keeps its original place. `distinct` counts every name the tally kept, which itself stops at 200.
-
-Refusals are **counted, not recorded per event**. Any active Cloudflare token can produce them without
-limit, so a row apiece would let one caller grow a table every deployment shares. The tally lives in a
-Durable Object, one instance per token: requests to an instance serialize, so nothing is lost to a race and
-there is no batching window for a caller to time a burst against. Padding a batch changes the count, never
-what the count sees. It resets when the UTC day rolls.
-
-That moves per-caller growth rather than removing it: any active token that reaches past its authority
-creates one instance. Each holds a single key, keeps at most 200 distinct names, spends at most 699 writes
-a day before the tally goes quiet, and clears itself 24 to 48 hours after the last refusal, so the bound is
-the reclaim window rather than the decision to count.
-
-Crossing 100 **distinct** names in a day logs a warning to Workers Logs, because `/history` is scoped to
-the very token being counted: without the log the tally would only ever be visible to the caller it
-describes. Distinct rather than total, because a DDNS client polls every two minutes, so one hostname typed
-wrong passes any total given an afternoon. Variety is what a caller sweeping for names it does not hold
-produces and a misconfigured one does not.
-
-These limits are worth stating plainly. The tally is keyed on the API token, and a Cloudflare account
-issues tokens freely, so an enumerator that rotates tokens before reaching the threshold never trips it.
-The per-record IP cache is consulted before zones are read, so for up to its own 30-day TTL after a token
-loses a zone, a name it used to hold still answers 200 and counts nothing; that is the record cache, not
-the 5-minute zone cache. And a zone added within the last five minutes reads as outside the token's
-authority until the zone cache expires. The warning is a cheap way to see a misconfigured or careless
-caller, not a control that stops a determined one.
-
-Nothing is counted against a token that sees more than 1000 zones. The zone walk stops at that ceiling, so
-a hostname in a zone past it was never looked for rather than reached for.
+The committed `wrangler.jsonc` carries no resource IDs and no domain. wrangler binds the KV namespace and
+the D1 database by name at deploy time, and the custom domain comes from the machine that deploys.
+Notifications need no deployment configuration: callers pass their own ntfy target with the `ntfy=`
+query parameter.
 
 ## ⚡ **Throughput & Cost**
 
@@ -254,7 +53,19 @@ The worker is built to take heavy public traffic cheaply:
 
 ## 🛠️ **Testing & Troubleshooting**
 
-Using this script with various Ubiquiti devices and different UniFi software versions can introduce unique challenges. If you encounter issues, start by checking the FAQ in `/docs/faq.md`. If you don’t find a solution, you can ask a question on the [discussions page](https://github.com/zachthedev/uddns/discussions/new?category=q-a). If the problem persists, please raise an issue [here](https://github.com/zachthedev/uddns/issues).
+Using this worker with various Ubiquiti devices and different UniFi software versions can introduce unique challenges. If you encounter issues, start with [docs/faq.md](docs/faq.md). If you don't find a solution, you can ask a question on the [discussions page](https://github.com/zachthedev/uddns/discussions/new?category=q-a). If the problem persists, please raise an issue [here](https://github.com/zachthedev/uddns/issues).
+
+## Documentation
+
+| File                               | Holds                                                                         |
+| ---------------------------------- | ----------------------------------------------------------------------------- |
+| [docs/usage.md](docs/usage.md)     | The API token, the device entry, the URL contract, audit history and refusals |
+| [docs/deploy.md](docs/deploy.md)   | Deploying to your own account, how a release deploys, and operating it        |
+| [docs/faq.md](docs/faq.md)         | The setup mistakes a device or a token makes, each with its fix               |
+| [docs/dev.md](docs/dev.md)         | Prerequisites, the first run, running the worker locally, and generated files |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | The gate, commit messages, where code goes, tests, dependencies and releases  |
+| [SECURITY.md](SECURITY.md)         | What counts as a vulnerability here, and how to report one                    |
+| [CHANGELOG.md](CHANGELOG.md)       | Every release, written by release-please                                      |
 
 ## 🙏 **Acknowledgments**
 

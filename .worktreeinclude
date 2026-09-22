@@ -1,0 +1,5 @@
+# The gitignored files a new worktree is seeded with. .gitignore syntax.
+# Worker secrets for `bun run dev`, copied from .dev.vars.template.
+.dev.vars
+# Account, custom domain and access key for a local `bun run deploy`, copied from .env.local.template.
+.env.local

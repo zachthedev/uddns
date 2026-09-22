@@ -8,7 +8,8 @@ vulnerability in that arrangement, and how to report one without publishing it f
 
 ## Reporting
 
-Open a private advisory: <https://github.com/zachthedev/uddns/security/advisories/new>
+Open a private advisory: <https://github.com/zachthedev/uddns/security/advisories/new>. A report can
+also go to <hey@zachthe.dev>.
 
 Never open a public issue for a vulnerability. Everything else belongs in the issue tracker.
 
@@ -51,13 +52,14 @@ same one.
   Report those to Cloudflare.
 - Anything the token already allows. A token scoped to a zone can rewrite every record in it through
   the API directly, and the worker adds no permission the token lacks. Scope the token to the zones a
-  device updates, as the README says.
+  device updates, as [docs/usage.md](docs/usage.md#the-cloudflare-api-token) says.
 - A deployment that leaves `ACCESS_KEY` unset. It answers anyone holding a valid Cloudflare token and
-  spends the deployment's quota doing it. The README names the key as the lockdown, and the rate
-  limiter is a cost cap rather than a gate.
-- The limits the README states plainly, each with the reason it stands: the history cursor carrying a
-  table-wide row id, the refusal tally that a caller rotating tokens never trips, the cache windows
-  during which a token that lost a zone still answers, and the rate limiter's per-colo precision.
+  spends the deployment's quota doing it. [docs/deploy.md](docs/deploy.md) names the key as the
+  lockdown, and the rate limiter is a cost cap rather than a gate.
+- The limits [docs/usage.md](docs/usage.md#refusals) states plainly, each with the reason it stands: the
+  history cursor carrying a table-wide row id, the refusal tally that a caller rotating tokens never
+  trips, the cache windows during which a token that lost a zone still answers, and the rate limiter's
+  per-colo precision.
 - The UniFi device, its DDNS client and where the controller keeps the password field. Report those
   to Ubiquiti.
 - What an ntfy server does with a message. The topic in a caller's own `ntfy=` URL is the only thing
