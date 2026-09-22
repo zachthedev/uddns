@@ -111,9 +111,9 @@ the release pull request when you want a version. Version numbers come from the
 [Conventional Commits](https://www.conventionalcommits.org/) in the range. A
 `!` or a `BREAKING CHANGE:` footer gives a major and a `feat:` gives a minor.
 Every other type that appears in the changelog gives a patch: `fix`, `perf`,
-`refactor`, `docs`, `build`, and `revert`. The types kept out of the changelog
-(`chore`, `ci`, `test`, `style`) release nothing at all, so a `main` carrying
-only those has no release pull request open.
+`build`, and `revert`. The types kept out of the changelog (`chore`, `ci`,
+`docs`, `style`, `refactor`, `test`) release nothing at all, so a `main`
+carrying only those has no release pull request open.
 
 Hiding a type in `release-please-config.json` is what does that. release-please
 renders the changelog body first, and opens no release pull request when it
