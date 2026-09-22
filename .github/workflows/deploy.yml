@@ -50,6 +50,16 @@ jobs:
           # was built by the bun the lockfile was resolved with.
           bun-version-file: package.json
 
+      # mise alone, for the tools the gate resolves through `mise which`.
+      # install: false and cache: false, because the gate asserts mise.lock
+      # before it installs from it.
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.11
+          install: false
+          cache: false
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -57,7 +67,7 @@ jobs:
       # against the revision about to reach production. Cheap enough to run on
       # the release path too, where it re-checks the merge commit.
       - name: Verify
-        run: bun run check:all
+        run: bun run check
 
       # scripts/deploy.ts is the single deploy path: it applies D1 migrations,
       # deploys the committed wrangler.jsonc, and syncs the optional ACCESS_KEY

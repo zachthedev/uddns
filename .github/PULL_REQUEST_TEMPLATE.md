@@ -4,7 +4,7 @@
 
 ## The gate
 
-Paste the test summary `bun run check:all` ends with.
+Paste the summary `bun run check` ends with.
 
 <!-- On Windows, point TEMP at a short path first. CONTRIBUTING.md says why. -->
 

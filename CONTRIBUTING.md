@@ -13,17 +13,25 @@ the files you stage, and check every commit message before it is recorded. The p
 ## The gate
 
 ```sh
-bun run check:all
+bun run check
 ```
 
-One command, and it is the whole gate. CI runs the same checks, split across the `Gate` job for
-`bun run check` and the `Test & Coverage` job for `bun run test:coverage`, so a green run on your
-machine is a green run there. Run it before you push. The push hook runs the `bun run check` half on its
-own. The tests are the half it leaves to you and to CI, because of the Windows temp path issue below: a
-hook that cannot pass on a maintainer's machine gets bypassed, and a bypassed hook guards nothing.
-`bun run test:watch` reruns the suite as you edit.
+One command, and it is the whole gate. `bun run check:rows` prints its rows. CI runs the same command
+on Linux, Windows and macOS in the `gate` job, so a green run on your machine is a green run there. Run
+it before you push. The push hook runs `bun run check:quick`, the gate without its test row, because of
+the Windows temp path issue below. `bun run test:watch` reruns the suite as you edit.
 
-A few checks run only in CI. `CLAUDE.md` lists them and says why each one sits outside the gate.
+The gate's own tools, actionlint, ShellCheck, taplo and zizmor, come from [mise](https://mise.jdx.dev)
+at the versions `mise.toml` pins. Install mise once and run `mise trust` in the checkout; the gate's
+first run downloads the four tools from `mise.lock`, and every run after that is offline. `mise.lock`
+pins Linux x64, macOS arm64 and Windows x64, the platforms CI runs, and mise refuses any other.
+`bun install` installs everything else, including the git hooks.
+
+`bun run check` runs zizmor online when `gh auth token` succeeds, handing that token to zizmor so its
+advisory and stale-ref audits can read GitHub. `bun run check:quick` runs it offline, and
+`ZIZMOR_OFFLINE=true` makes `bun run check` do the same.
+
+A few checks run only in CI. `AGENTS.md` lists them and says why each one sits outside the gate.
 
 On Windows, the Durable Object and D1 tests run in workerd, which keeps SQLite files under the temp
 directory. A long temp path pushes them past MAX_PATH, and every such test fails with `internal error`
