@@ -54,7 +54,8 @@ domain and access key. [docs/deploy.md](deploy.md) says what a deploy does.
   `git diff --exit-code` against it, so it compares bytes against the index rather than trusting the file's
   own header. wrangler carries the runtime half forward from an existing file whenever its
   `// Runtime types generated with workerd@` line matches, which is why the row deletes first, and
-  wrangler's own `--check` flag reads only the header lines, which is why it is not used. A red row means
+  wrangler's own `--check` flag reads only the header lines, which is why it is not used. The diff passes
+  `--no-ext-diff`, so a `diff.external` seeded through the environment cannot answer for it. A red row means
   the committed file is stale: stage the regenerated one and run again. If wrangler itself fails, the
   file is absent until `git checkout -- worker-configuration.d.ts` restores it.
 - `mise.lock`, by `mise lock` after any edit to `[tools]` in `mise.toml`. taplo's release carries no
