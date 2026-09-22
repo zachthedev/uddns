@@ -40,7 +40,7 @@ green row red and neither turns a red one green. Do not set either when running 
 
 Checks that run in CI and not in the gate, each with the reason it sits outside:
 
-- `Commit Messages` lints the pull request's commit range and its title. Neither exists before the pull
+- `commits` lints the pull request's commit range and its title. Neither exists before the pull
   request does.
 - `Secret scan` runs trufflehog over the pull request's base and head commits with the official action,
   which no working machine has.

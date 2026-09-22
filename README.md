@@ -1,6 +1,6 @@
 # 🌩️ Cloudflare DDNS for UniFi OS
 
-[![CodeQL](https://github.com/zachthedev/uddns/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/github-code-scanning/codeql)
+[![codeql](https://github.com/zachthedev/uddns/actions/workflows/codeql.yml/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/codeql.yml)
 [![CI](https://github.com/zachthedev/uddns/actions/workflows/ci.yml/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/ci.yml)
 [![deps](https://github.com/zachthedev/uddns/actions/workflows/deps.yml/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/deps.yml)
 [![cd](https://github.com/zachthedev/uddns/actions/workflows/cd.yml/badge.svg)](https://github.com/zachthedev/uddns/actions/workflows/cd.yml)
