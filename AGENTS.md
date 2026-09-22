@@ -44,13 +44,13 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   A scheduled job nobody reads is worse than none, because it manufactures the appearance of coverage. A
   red `audit` run is work to pick up, not a notification to dismiss.
 - Waiving an advisory the team has consciously accepted: add `--ignore <GHSA-id>` to the `audit` script in
-  `package.json`, and in the same commit add a row to the advisory waivers table in
-  docs/dependency-overrides.md giving the advisory URL, what it affects here, why shipping is safer than
-  not shipping, and what removes the exception. `package.json` takes no comments, so the record lives in
-  the doc and the flag points at it by ID. A flag with no row is the shape this rule exists to prevent: a
+  `package.json`, and in the same commit a comment beside the `Audit dependencies` job in `ci.yml` naming
+  the advisory, what it affects here, why shipping is safer than not shipping, and what removes the
+  exception (CONTRIBUTING.md#dependencies). `package.json` takes no comments, so the workflow carries the
+  record and the flag points at it by ID. A flag with no record is the shape this rule exists to prevent: a
   gate one person can suppress in ten seconds is not a gate, and the written record is what stands in for
   the reviewer a solo maintainer does not have. It is also how the audit comes to block only on what a
-  change introduces, because a pre-existing advisory stops blocking once its row exists.
+  change introduces, because a pre-existing advisory stops blocking once its record exists.
 - Accepted behavior: `bun audit` fails closed. When it cannot reach the advisory endpoint the pull
   request gate fails, and stays failed until the outage clears, so somebody else's registry incident
   becomes a blocked merge here. That is chosen rather than overlooked. The road not taken, measured
@@ -117,7 +117,7 @@ the Cloudflare Vitest plugin, ESLint + prettier, lefthook hooks.
   `typescript` to 7.x and drop the alias.
 - Dependency overrides: `package.json` carries no `overrides` block, and that is the state to return to.
   A `bun audit` failure is usually a stale lockfile, so re-resolve before pinning anything
-  (see docs/dependency-overrides.md).
+  (CONTRIBUTING.md#dependencies).
 
 Cloudflare resource naming: `<type>-<project>-<purpose>-<env>`, e.g.
 `kv-uddns-cache-prod`, `kv-uddns-cache-dev`, `d1-uddns-audit-prod`. Binding

@@ -2,7 +2,8 @@
 .dev.vars
 .wrangler/
 
-# Below: github/gitignore/Node.gitignore at f5de2c2bb2c117f9ae643d6baa7acc23c580b7aa. Do not edit below this line; replace the block to update.
+# Changed from the template: `!.env.local.template` added beside `!.env.example`.
+# Below: github/gitignore/Node.gitignore at f5de2c2bb2c117f9ae643d6baa7acc23c580b7aa.
 # Logs
 logs
 *.log
@@ -74,6 +75,7 @@ web_modules/
 .env
 .env.*
 !.env.example
+!.env.local.template
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -146,5 +148,3 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
-# Overrides of the template above. They sit below it because the last matching pattern wins.
-!.env.local.template
