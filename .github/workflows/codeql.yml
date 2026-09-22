@@ -10,7 +10,7 @@ on:
     branches: [main]
   pull_request:
   # Weekly, so a query published after the last change to this repository still reports against
-  # this tree. Thursday, clear of dependency-updates.yml's daily cron and of dependency-audit.yml's.
+  # this tree. Thursday, clear of dependency-updates.yml's daily cron and of audit.yml's.
   schedule:
     - cron: '37 9 * * 4'
 

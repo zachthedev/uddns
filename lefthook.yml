@@ -37,11 +37,11 @@ commit-msg:
 
 pre-push:
   jobs:
-    # One script call, so the gate's legs live only in package.json. `check` is
-    # the script the CI Gate job runs. The tests stay out of this hook: the
-    # Durable Object and D1 suites fail under a long TEMP path on Windows, and a
-    # hook that cannot pass on a maintainer's machine gets bypassed, which guards
-    # nothing. CI runs the tests on every pull request. The gate runs over the
-    # working tree, so uncommitted edits count toward the result.
+    # The gate without its test row, so the hook passes on a maintainer's
+    # machine whatever its temp path is; a hook that cannot pass gets bypassed,
+    # and a bypassed hook guards nothing. CI's gate job runs the whole of
+    # `bun run check`, tests included, on three platforms. The rows live in
+    # scripts/check.ts alone. The hook runs over the working tree, so
+    # uncommitted edits count toward the result.
     - name: check
-      run: bun run check
+      run: bun run check:quick

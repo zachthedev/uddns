@@ -143,7 +143,7 @@ request opened by `GITHUB_TOKEN` at `action_required` with no jobs, until
 somebody approves it by hand. No check is waived for it, commit message linting
 included: a release commit is a one-line `chore(main): release x.y.z`, and the
 changelog goes to `CHANGELOG.md` and the pull request body. The Release workflow
-also runs `bun run check:all` against the push to main, ahead of the tag and the
+also runs `bun run check` against the push to main, ahead of the tag and the
 GitHub Release, neither of which can be withdrawn once published.
 
 The Deploy workflow answers to a call and a manual run, with no tag trigger, so

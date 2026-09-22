@@ -8,9 +8,8 @@ anything.
 
 ## The rules that do not bend
 
-- **The gate is `bun run check:all`.** Run it before calling a change done, and never run its steps
-  separately as a substitute. `bun run check` is the part CI's `Gate` job runs, and the tests are the
-  rest.
+- **The gate is `bun run check`.** Run it before calling a change done, and never run its steps
+  separately as a substitute.
 - **A test never reaches the Cloudflare API, a DNS record or an ntfy server.** `fetch` is stubbed and
   the bindings are miniflare's. Never run `bun run deploy` unless the user asks. It provisions and
   changes resources on a real Cloudflare account.

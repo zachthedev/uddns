@@ -1,0 +1,57 @@
+# The tools the gate runs that no package in bun.lock ships, pinned. One
+# version per tool, here and nowhere else: `bun run check` resolves each binary
+# through `mise which`, and the ci workflow installs from this file.
+#
+# A bare name comes from mise's registry, which routes it to a release artifact
+# through the aqua backend. mise.lock holds the artifact each version resolved
+# to, per platform in lockfile_platforms, and the gate reads that file against
+# the owner, host and provenance scripts/tools.ts expects before anything
+# installs from it. `mise lock` rewrites it after any edit to [tools].
+#
+# The settings below are what mise reads; the gate does not assert them. A
+# MISE_ variable outranks any of them for the process that carries it.
+
+[tools]
+# actionlint and zizmor attest their releases, so mise.lock records provenance
+# and every install verifies the artifact against the attestation.
+actionlint = "1.7.12"
+zizmor = "1.30.1"
+# shellcheck and taplo carry no attestation. Each is a checksum in a pinned
+# tree: mise.lock records the sha256 of the artifact, and the lockfile is
+# reviewed with the bump that rewrites it. taplo's release predates GitHub's
+# asset digests and its registry entry names no checksum file, so `mise lock`
+# records no checksum for it. Its three checksum lines are the sha256 of the
+# artifact at each recorded url, computed once from a download, and a relock
+# keeps them. A bump to a release that carries a digest removes the exception.
+shellcheck = "0.11.0"
+taplo = "0.10.0"
+
+[tool_config]
+# The locked mode no environment variable reaches. mise refuses to install a
+# version mise.lock does not record, so an edit to [tools] with no relock is
+# refused rather than fetched.
+locked = true
+
+[settings]
+# The same refusal at the settings level, which is what `mise which` answers
+# for. MISE_LOCKED=false or a locked_scopes list without project turns it off,
+# and neither reaches the [tool_config] line above.
+locked = true
+# mise.lock is written as well as read, so a bump records what it resolved to.
+lockfile = true
+# The platforms mise.lock pins, which are the platforms the ci matrix runs.
+lockfile_platforms = ["linux-x64", "macos-arm64", "windows-x64"]
+# Every install re-verifies an attested artifact against its attestation. The
+# expectation comes from the lockfile's own entry, so this arms the downgrade
+# refusal for an entry that claims provenance and replaces none of the gate's
+# lockfile assertions.
+locked_verify_provenance = true
+# An attestation query that cannot complete is an install error rather than a
+# skipped check.
+provenance_api_failures_fatal = true
+# The attestation switches. mise defaults both on; they are written here
+# because a default is a thing that can change under the repository.
+github_attestations = true
+
+[settings.aqua]
+github_attestations = true
