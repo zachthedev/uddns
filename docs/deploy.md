@@ -108,18 +108,18 @@ pull request is the owner's act.
 - Logs are Workers Logs with the query string redacted, because it carries the caller's ntfy topic and
   the hostnames it manages. The handler logs every request the rate limiter admits and its outcome; a
   flood the limiter turns away writes no line.
-- The `audit` workflow runs `bun audit` over the whole lock file once a day. A red run is a report, never
-  a check: it means work to pick up, a direct bump through Renovate's next security fix or a transitive one
-  by hand. Between an advisory landing and a fix, the worker runs vulnerable code, and that run is the
-  only thing that says so. Somebody has to read it.
+- The `audit` workflow runs `bun audit` over the whole lock file once a day, and zizmor's online audits
+  over the pinned actions once a week. A red run is a report, never a check: it means work to pick up, a
+  direct bump through Renovate's next security fix or a transitive one by hand. Between an advisory
+  landing and a fix, the worker runs vulnerable code, and that run is the only thing that says so.
+  Somebody has to read it.
 - The scheduled workflows depend on Renovate staying alive. GitHub disables a `schedule:` trigger in a
   public repository after 60 days with no repository activity, and Renovate's branch pushes are that
   activity. If Renovate stops, the dependency update and audit schedules go quiet together and are then
-  disabled, with no notification. The thing that would report the failure is the thing that failed, so
-  check Renovate is still opening pull requests.
+  disabled. GitHub sends one email about the disable, to the last committer, and nothing after it, so
+  check Renovate is still opening pull requests. `gh workflow enable` turns a disabled workflow back on.
 - Rollback is a manual run of the deploy workflow against the last good tag. The deploy applies
   migrations and never reverts one, so the older revision then runs against the newer schema, and a
-  migration that drops or rewrites a column takes that rollback away. `migrations/` holds one migration
-  today, the table's creation.
+  migration that drops or rewrites a column takes that rollback away.
 - A caller reaching past its token's authority more than 100 distinct times in a day logs a warning.
   [docs/usage.md](usage.md#refusals) says what counts and what the warning can and cannot catch.

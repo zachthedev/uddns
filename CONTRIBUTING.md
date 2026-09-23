@@ -137,10 +137,10 @@ ships, a development dependency, a wrangler bump and an action bump land as `cho
 Unhiding one of those types in `release-please-config.json` would put its commits back in the changelog,
 so each would cut a release and deploy.
 
-Two compilers are installed on purpose. `bun run typecheck` runs the native TypeScript 7 compiler from
-the `@typescript/native` alias, called by path because `typescript` also ships a `tsc`. `typescript` stays
-on 6.x for typescript-eslint, which needs the 6.x compiler API. Once typescript-eslint's `typescript` peer
-range admits 7, move `typescript` to 7.x and drop the alias.
+Two compilers are installed on purpose. `bun run typecheck` runs the native compiler from the
+`@typescript/native` alias, called by path because `typescript` also ships a `tsc`. `typescript` itself
+stays on the major typescript-eslint's `typescript` peer range admits, because typescript-eslint needs
+that compiler's API; `.github/renovate.json` holds the major back and says what lifts the hold.
 
 The advisory legs:
 
@@ -151,9 +151,9 @@ The advisory legs:
 - The `audit` workflow runs `bun audit --audit-level=high` over the whole of `bun.lock`, transitives
   included, once a day as a report. It never blocks a merge or a deploy: uddns is a deployed service, so
   blocking would not remove the vulnerable code from production, and every unrelated fix would queue behind
-  the block. Between an advisory landing and a fix, the worker runs vulnerable code, and the daily run is
-  the only thing that says so. A red run is work to pick up. It fails closed: when it cannot reach the
-  advisory endpoint it stays red until the outage clears.
+  the block. A red run is work to pick up, and [docs/deploy.md](docs/deploy.md#operating-it) says what it
+  means for the running worker. It fails closed: when it cannot reach the advisory endpoint it stays red
+  until the outage clears.
 - Dependabot alerts stay on, security updates off; Renovate opens the fix for a direct dependency, and a
   transitive is fixed by hand as below.
 
@@ -180,8 +180,9 @@ Clearing a finding, in order:
 
 [release-please](https://github.com/googleapis/release-please) runs under the `zachthedev-releaser` app
 on every push to `main`. Once a releasable change lands, it opens one pull request titled
-`chore(main): release x.y.z` and keeps it up to date. Merging it is the release: the merge commit is
-tagged, the GitHub Release is published, and the deploy runs against that revision.
+`chore(main): release x.y.z` and keeps it up to date. Merging it tags the merge commit and creates the
+GitHub Release as a draft, every time; the `publish` job flips the draft public under the `release`
+environment's reviewer, and the deploy runs against that revision.
 [docs/deploy.md](docs/deploy.md#releasing-deploys) says how the deploy follows.
 
 release-please owns the version in `package.json`, `.release-please-manifest.json` and `CHANGELOG.md`.

@@ -57,6 +57,8 @@ Using this worker with various Ubiquiti devices and different UniFi software ver
 
 ## Documentation
 
+`bun run check` is the gate; [CONTRIBUTING.md](CONTRIBUTING.md#the-gate) says what it covers.
+
 | File                               | Holds                                                                         |
 | ---------------------------------- | ----------------------------------------------------------------------------- |
 | [docs/usage.md](docs/usage.md)     | The API token, the device entry, the URL contract, audit history and refusals |

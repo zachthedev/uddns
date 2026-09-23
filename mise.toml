@@ -20,7 +20,7 @@ zizmor = "1.30.1"
 # tree: mise.lock records the sha256 of the artifact, and the lockfile is
 # reviewed with the bump that rewrites it. taplo's release predates GitHub's
 # asset digests and its registry entry names no checksum file, so `mise lock`
-# records no checksum for it. Its three checksum lines are the sha256 of the
+# records no checksum for it. Its checksum lines are the sha256 of the
 # artifact at each recorded url, computed once from a download, and a relock
 # keeps them. A bump to a release that carries a digest removes the exception.
 shellcheck = "0.11.0"

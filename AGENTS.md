@@ -35,20 +35,18 @@ Session rules, each with its reason:
   The gate documents them rather than refusing them, because the environment that carries them also
   carries `PATH`.
 
-Tree rules, each held by the gate or review, with the reason in the linked section:
+Tree rules, each held by the gate or review, with the reason in
+[CONTRIBUTING.md#what-never-happens](CONTRIBUTING.md#what-never-happens):
 
 - Never commit a resource ID or a route in `wrangler.jsonc`
-  ([CONTRIBUTING.md#what-never-happens](CONTRIBUTING.md#what-never-happens)).
+  ([why](CONTRIBUTING.md#what-never-happens)).
 - Never let a test reach the Cloudflare API, a DNS record or an ntfy server
-  ([CONTRIBUTING.md#tests](CONTRIBUTING.md#tests)).
-- Never hand-edit `package.json`'s version, `.release-please-manifest.json` or `CHANGELOG.md`
-  ([CONTRIBUTING.md#releases](CONTRIBUTING.md#releases)).
-- Never use a scope outside `.github/commit-scopes.json`, and never give a tooling change a type that
-  cuts a release ([CONTRIBUTING.md#commit-messages](CONTRIBUTING.md#commit-messages)).
-- Never add a check as a workflow step; a new check is a row in `scripts/check.ts`
-  ([CONTRIBUTING.md#the-gate](CONTRIBUTING.md#the-gate)).
-- Never restate a list another file owns; name it and link it
-  ([CONTRIBUTING.md#what-never-happens](CONTRIBUTING.md#what-never-happens)).
+  ([why](CONTRIBUTING.md#what-never-happens)).
+- Never hand-edit a file release-please owns ([why](CONTRIBUTING.md#what-never-happens)).
+- Never use a scope outside `.github/commit-scopes.json` ([why](CONTRIBUTING.md#what-never-happens)).
+- Never give a tooling change a type that cuts a release ([why](CONTRIBUTING.md#what-never-happens)).
+- Never add a check as a workflow step ([why](CONTRIBUTING.md#what-never-happens)).
+- Never restate a list another file owns ([why](CONTRIBUTING.md#what-never-happens)).
 
 ## Deviations
 
