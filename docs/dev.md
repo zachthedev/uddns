@@ -7,10 +7,9 @@ carries the conventions; this file carries the machine.
 
 - [Bun](https://bun.sh), at the version `packageManager` in `package.json` names. Bun is the package
   manager, the script runner and the runtime for `scripts/`.
-- [mise](https://mise.jdx.dev), any current release. It installs the four tools the gate runs that no
-  package in `bun.lock` ships: actionlint, ShellCheck, taplo and zizmor, at the versions `mise.toml` pins
-  and the artifacts `mise.lock` records. `mise.lock` pins Linux x64, macOS arm64 and Windows x64, the
-  platforms CI runs, and mise refuses any other.
+- [mise](https://mise.jdx.dev), any current release. It installs the tools the gate runs that no package
+  in `bun.lock` ships. `mise.toml` names each tool, its version and the platforms `mise.lock` pins, which
+  are the platforms CI runs; mise refuses any other.
 - [GitHub CLI](https://cli.github.com), optional. When `gh auth token` succeeds, `bun run check` runs
   zizmor online and hands it that token, so its advisory and stale-ref audits can read GitHub.
 
@@ -25,7 +24,7 @@ bun run check
 ```
 
 `bun install` installs the dependencies and the git hooks. `mise trust` lets mise read this checkout's
-`mise.toml`; the first `bun run check` then downloads the four tools, and every run after that is
+`mise.toml`; the first `bun run check` then downloads the tools it names, and every run after that is
 offline. `bun run check:rows` prints what the gate covers.
 
 On Windows, the Durable Object and D1 tests run in workerd, which keeps SQLite files under the temp
@@ -58,9 +57,9 @@ domain and access key. [docs/deploy.md](deploy.md) says what a deploy does.
   `--no-ext-diff`, so a `diff.external` seeded through the environment cannot answer for it. A red row means
   the committed file is stale: stage the regenerated one and run again. If wrangler itself fails, the
   file is absent until `git checkout -- worker-configuration.d.ts` restores it.
-- `mise.lock`, by `mise lock` after any edit to `[tools]` in `mise.toml`. taplo's release carries no
-  digest, so its three checksums were computed once from the artifacts at the recorded urls; a relock
-  keeps them, and `mise.toml` says so beside the pin.
+- `mise.lock`, by `mise lock` after any edit to `[tools]` in `mise.toml`. A release with no asset digest
+  gets its checksums computed once from the artifacts at the recorded urls; a relock keeps them, and
+  `mise.toml` says which tool and how, beside its pin.
 - `CHANGELOG.md`, `package.json`'s version and `.release-please-manifest.json`, by release-please. Nobody
   edits those by hand; [CONTRIBUTING.md](../CONTRIBUTING.md#releases) says why.
 

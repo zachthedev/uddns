@@ -4,9 +4,9 @@
 
 ## The gate
 
-Paste the summary `bun run check` ends with.
+Paste the last line the gate prints. `CONTRIBUTING.md` names the command.
 
-<!-- On Windows, point TEMP at a short path first. CONTRIBUTING.md says why. -->
+<!-- On Windows, point TEMP at a short path first. docs/dev.md says why. -->
 
 ```text
 
@@ -20,12 +20,14 @@ Paste the summary `bun run check` ends with.
 
 ## Every change
 
+- [ ] Each commit follows Conventional Commits, with a scope from `.github/commit-scopes.json` or none.
+- [ ] The documentation says what a user sees, where this changes it.
+- [ ] A deviation from the handbook is recorded at its drift site.
 - [ ] Each new test states what the code should do, and none of them reaches the Cloudflare API, a DNS
       record or an ntfy server. `fetch` is stubbed and the bindings are miniflare's.
-- [ ] The README says what a caller sees, where this changes it.
 
 ## If this changes a query parameter or a response field
 
-- [ ] The README's Server field and `docs/faq.md` show the new shape.
+- [ ] `docs/usage.md`'s URL contract and `docs/faq.md` show the new shape.
 - [ ] The commit is `feat!` when a Server field that works today stops working. The URL contract is
       the interface the version number describes.
