@@ -43,6 +43,13 @@ default: `CLOUDFLARE_INCLUDE_PROCESS_ENV=true` copies the whole shell environmen
 `CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false` makes wrangler ignore the `--env-file` flag. Either turns a
 green row red and neither turns a red one green. Do not set either when running the gate.
 
+The three saturation tests in `tests/refusals.test.ts` can fail with `Test timed out` on a heavily loaded
+machine. They are the two `stops writing at the same point` cases and `records a name it has not seen even
+once the writes are spent`. Each drives the tally to its write ceiling, `WRITES_MAX` in `src/refusals.ts`,
+one call at a time. Under heavy load those calls outlast `testTimeout` in `vitest.config.mts`. Unloaded,
+they finish well inside it. A timeout on those three alone, under load, is not a regression. Re-run the
+gate with the machine unloaded.
+
 Checks that run in CI and not in the gate, each with the reason it sits outside:
 
 - `commits` lints the pull request's commit range and its title. Neither exists before the pull
