@@ -43,12 +43,11 @@ default: `CLOUDFLARE_INCLUDE_PROCESS_ENV=true` copies the whole shell environmen
 `CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false` makes wrangler ignore the `--env-file` flag. Either turns a
 green row red and neither turns a red one green. Do not set either when running the gate.
 
-The three saturation tests in `tests/refusals.test.ts` can fail with `Test timed out` on a heavily loaded
-machine. They are the two `stops writing at the same point` cases and `records a name it has not seen even
-once the writes are spent`. Each drives the tally to its write ceiling, `WRITES_MAX` in `src/refusals.ts`,
-one call at a time. Under heavy load those calls outlast `testTimeout` in `vitest.config.mts`. Unloaded,
-they finish well inside it. A timeout on those three alone, under load, is not a regression. Re-run the
-gate with the machine unloaded.
+The saturation tests in `tests/refusals.test.ts` can fail with `Test timed out` on a heavily loaded
+machine. They are the tests under `RefusalCounter guards` that drive the tally to its write ceiling,
+`WRITES_MAX` in `src/refusals.ts`, one call at a time. Under heavy load those calls outlast `testTimeout`
+in `vitest.config.mts`. Unloaded, they finish well inside it. A timeout on the saturation tests alone,
+under load, is not a regression. Re-run the gate with the machine unloaded.
 
 Checks that run in CI and not in the gate, each with the reason it sits outside:
 
@@ -102,9 +101,10 @@ one. A new area earns a scope in that file, in the change that adds the area.
 The header and every body line stay within 72 characters. A squash merge of a one-commit pull request
 lands that commit's subject and body. A longer pull request lands under its title, with its commits as
 bullets in the body. release-please reads the title's type alone, so the title takes the type of the pull
-request's most user-facing commit. GitHub appends ` (#NNN)` to either subject. CI lints the title with
-that suffix and each commit as written. Keep the title within 65, and a one-commit pull request's subject
-equal to its title, so the title's lint covers the subject that lands.
+request's most user-facing commit. The title also carries `!` when any of its commits breaks something
+users see, because a commit's own `!` does not survive the squash. GitHub appends ` (#NNN)` to either
+subject. CI lints the title with that suffix and each commit as written. Keep the title within 65, and a
+one-commit pull request's subject equal to its title, so the title's lint covers the subject that lands.
 
 A squash that landed under the wrong type is corrected in the merged pull request's description, before
 the release pull request merges. release-please runs on the next push to `main` and reads an
@@ -121,8 +121,9 @@ END_COMMIT_OVERRIDE
 
 The body carries what the diff cannot show: what was wrong, what the change does now, and what was
 deliberately not done. Change narrative belongs here and never in a code comment, which describes the code
-as it is. A breaking change carries `!` after the type or scope, as in `feat!:`, and explains the break in
-the body.
+as it is. A change that breaks something users see carries `!` after the type or scope, as in `feat!:`,
+and explains the break in the body. A break only contributors see, such as a renamed gate row, carries
+neither `!` nor a `BREAKING CHANGE:` footer, because either one cuts a major release whatever the type.
 
 ## Where code goes
 
@@ -227,9 +228,10 @@ Nobody edits any of the three by hand.
 
 What makes a change releasable is `changelog-sections` in `release-please-config.json`. release-please
 renders the changelog body first and opens no release pull request when it comes out empty, so a hidden
-type releases nothing and a visible one gives a patch, `feat` a minor, and `!` or a `BREAKING CHANGE:`
-footer a major. Hiding decides releasability, not presentation. The commit types the changelog hides are
-that file's record. [Commit messages](#commit-messages) says why a change takes one.
+type releases nothing and a visible one gives a patch, `feat` a minor. `!` or a `BREAKING CHANGE:` footer
+gives a major on any type, a hidden one included. Hiding decides releasability, not presentation. The
+commit types the changelog hides are that file's record. [Commit messages](#commit-messages) says why a
+change takes one.
 
 The version started at 1.0.0 rather than 0.x, deliberately. The worker's interface is its URL contract:
 the query parameters a device sends and the JSON it gets back. That contract was settled at v1.0.0 and
