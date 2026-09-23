@@ -111,6 +111,16 @@ export default defineConfig(
     extends: [tseslint.configs.disableTypeChecked],
   },
 
+  // commitlint.config.js is shared byte for byte across repositories and uses
+  // URL as the global Node provides, so the global is declared here rather
+  // than imported there.
+  {
+    files: ['commitlint.config.js'],
+    languageOptions: {
+      globals: { URL: 'readonly' },
+    },
+  },
+
   // Must stay last: disables rules that conflict with prettier formatting
   prettierConfig,
 );

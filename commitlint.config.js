@@ -1,12 +1,8 @@
 import { readFileSync } from 'node:fs';
-// eslint lints this file without type information, where URL is not a
-// declared global, so it comes from the module that exports it.
-import { URL } from 'node:url';
 
 // .github/commit-scopes.json lists each scope and what it covers. CONTRIBUTING.md points at it
 // rather than restating it, so a new scope is one edit. The path resolves against this file,
-// so the list is found however this module is loaded: by commitlint from the repository root,
-// or by the test that imports it from tests/.
+// so the list is found however this module is loaded.
 const vocabularyPath = new URL('.github/commit-scopes.json', import.meta.url);
 const scopes = JSON.parse(readFileSync(vocabularyPath, 'utf8')).map((entry) => entry.scope);
 

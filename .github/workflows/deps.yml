@@ -25,6 +25,8 @@ permissions: {}
 
 jobs:
   deps:
+    # A full SHA, as every action is pinned. Renovate reads the version comment
+    # beside it to move the pair.
     uses: zachthedev/.github/.github/workflows/deps.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
     with:
       log-level: ${{ inputs.log-level || 'info' }}

@@ -3,5 +3,7 @@ worker-configuration.d.ts
 
 # Written by release-please on every release. Its bullets are `*` and its
 # version headers carry a blank line prettier would collapse, so formatting it
-# turns each release into a failing check on main.
+# turns each release into a failing check on main. The manifest is written by
+# the same tool, which keeps whatever layout the file already has.
 CHANGELOG.md
+.release-please-manifest.json

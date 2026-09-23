@@ -1,50 +1,55 @@
 name: audit
 
-# The whole-tree advisory report, on its own clock. bun audit reads every
-# package in bun.lock, transitives included, against the live database and
-# exits non-zero at or above its audit level. A red run is a report, never a
-# check: it means work to pick up, a direct bump through Renovate's next
-# security fix or a transitive one by hand with bun audit fix. Nothing merges,
-# releases or deploys through this file. The pull request checks in ci.yml
-# hold what a change adds. This file reports what the world found about the
-# tree since.
+# The whole-tree reports, each on its own clock. A red run is a report, never a check: it means
+# work to pick up. Nothing merges, releases or deploys through this file. The pull request checks
+# in ci.yml hold what a change adds. This file reports what the world found about the tree since.
 #
-# A scheduled run is a safety net rather than a guarantee. GitHub delays the
-# schedule event under load and drops queued jobs outright when load is high
-# enough, and disables the schedule after 60 days without repository activity.
+# Daily, bun audit reads every package in bun.lock, transitives included, against the live
+# database and exits non-zero at or above its audit level. The work is a direct bump through
+# Renovate's next security fix or a transitive one by hand with bun audit fix.
+#
+# Weekly, the workflows job runs zizmor's online audits over the pinned actions: a pinned commit
+# outside its action's repository, a stale action ref, a known-vulnerable action. Those answers
+# change with no pull request, so a schedule is what asks again.
 on:
-  # At least once a day. Not the top of the hour, which is the documented
-  # high-load window, and clear of the Renovate run's cron.
   schedule:
-    - cron: '41 6 * * *'
+    # At least once a day. The hour is clear of deps.yml's cron.
+    - cron: '41 5 * * *'
+    # At least once a week. Monday, an hour after the daily run.
+    - cron: '41 6 * * 1'
   workflow_dispatch:
 
 permissions: {}
 
 jobs:
+  # The daily clock, and every dispatch. The schedule context carries the cron that fired.
   audit:
+    if: github.event_name != 'schedule' || github.event.schedule == '41 5 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       # bun audit reads bun.lock, so the job needs Bun and no install.
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
-
-      # The verdict is a claim about an external database, and a clean verdict
-      # names no endpoint. bun audit has no --registry flag, and this variable
-      # outranks bunfig.toml and a dotenv, so setting it here fixes the
-      # endpoint for the run.
-      - name: Audit dependencies
+      # The verdict is a claim about an external database, and a clean verdict names no
+      # endpoint. bun audit has no --registry flag, and this variable outranks bunfig.toml and
+      # a dotenv, so setting it here fixes the endpoint for the run.
+      # Deviates from the handbook's audit.yml, which runs bun audit bare: this runs the
+      # package.json audit script, so its --audit-level and the --ignore waivers
+      # CONTRIBUTING.md#dependencies records apply to the daily report too.
+      - run: bun run audit
         env:
           BUN_CONFIG_REGISTRY: https://registry.npmjs.org/
-        run: bun run audit
+
+  # The weekly clock, and every dispatch. The calling job grants what the called job declares.
+  workflows:
+    if: github.event_name != 'schedule' || github.event.schedule == '41 6 * * 1'
+    permissions:
+      contents: read
+    uses: zachthedev/.github/.github/workflows/workflows.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0

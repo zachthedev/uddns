@@ -6,8 +6,7 @@
       "description": "The plugin pins wrangler exactly, and a split leaves two wranglers in the tree. Major updates join this group rather than splitting off.",
       "matchDepNames": ["wrangler", "@cloudflare/vitest-plugin"],
       "groupName": "wrangler",
-      "separateMajorMinor": false,
-      "semanticCommitType": "chore"
+      "separateMajorMinor": false
     },
     {
       "description": "typescript-eslint declares a typescript peer range below 6.1.0 and throws on a TypeScript 7 tree, so typescript stays on 6.x. Drop this rule once typescript-eslint supports TypeScript 7: https://typescript-eslint.io/users/dependency-versions",
