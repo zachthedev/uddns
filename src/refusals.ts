@@ -28,14 +28,15 @@ export interface RefusalTally {
 /** A tally, plus whether this call is the one that should report it. */
 export interface RefusalUpdate extends RefusalTally {
   /**
-   * True on exactly one call per token per day: the first to find the tally
-   * at or past ALERT_DISTINCT.
+   * True on at most one call per token per day: the one whose write first
+   * records the tally at or past ALERT_DISTINCT.
    *
-   * Decided here rather than by comparing counts at the caller, because a
-   * caller-side comparison fires on a transition. An `add` whose write lands
-   * but whose response is lost would take the transition with it, and every
-   * later call that day would see a tally that was already past the line.
-   * The flag persists, so the next call reports what the lost one would have.
+   * Decided here, where the stored tally and this call's names are both in
+   * hand. A caller reading only the returned tally cannot tell the call that
+   * crossed the line from the calls after it. `warned` is written with the
+   * tally that earned the alert, so every later call that day returns false.
+   * A response lost after that write therefore loses the day's alert. A new
+   * day starts silent, so a caller still sweeping can cross the line again.
    */
   alert: boolean;
 }

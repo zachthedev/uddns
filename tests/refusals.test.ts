@@ -325,7 +325,7 @@ describe('RefusalCounter guards', () => {
     await expect(counter.add(tomorrow, names(100, 'a'))).resolves.toMatchObject({ alert: true });
   });
 
-  it('raises the alert on the next call when one is lost after the write', async () => {
+  it('does not raise the alert again when the response carrying it is lost', async () => {
     // The flag lives with the tally rather than being derived from a
     // before-and-after comparison at the caller. An add whose write lands
     // but whose response is lost would take a transition with it, and every
