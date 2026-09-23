@@ -121,5 +121,5 @@ pull request is the owner's act.
 - Rollback is a manual run of the deploy workflow against the last good tag. The deploy applies
   migrations and never reverts one, so the older revision then runs against the newer schema, and a
   migration that drops or rewrites a column takes that rollback away.
-- A caller reaching past its token's authority more than 100 distinct times in a day logs a warning.
+- A caller reaching past its token's authority for 100 distinct names in a day logs a warning.
   [docs/usage.md](usage.md#refusals) says what counts and what the warning can and cannot catch.

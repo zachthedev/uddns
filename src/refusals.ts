@@ -80,7 +80,7 @@ const NAME_MAX_LENGTH = 253;
 const WRITES_MAX = 500;
 
 /**
- * Distinct names in a day past which the tally is worth an operator's eye.
+ * Distinct names in a day at which the tally is worth an operator's eye.
  *
  * One request carries at most 40 records, so reaching this takes several full
  * batches of names no zone on the token can hold. Distinct rather than total,
