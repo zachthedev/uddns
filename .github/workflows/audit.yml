@@ -40,8 +40,8 @@ jobs:
       # The verdict is a claim about an external database, and a clean verdict names no
       # endpoint. bun audit has no --registry flag, and this variable outranks bunfig.toml and
       # a dotenv, so setting it here fixes the endpoint for the run.
-      # Deviates from the handbook's audit.yml, which runs bun audit bare: this runs the
-      # package.json audit script, so its --audit-level and the --ignore waivers
+      # Deviates from the handbook: zachthedev/.github's audit.yml runs bun audit bare. This runs
+      # the package.json audit script, so its --audit-level and the --ignore waivers
       # CONTRIBUTING.md#dependencies records apply to the daily report too.
       - run: bun run audit
         env:

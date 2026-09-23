@@ -6,11 +6,16 @@
 bun install
 ```
 
-Install before committing. That installs the dependencies and the git hooks, and every hook resolves its
-tool from the installed packages and fails closed without them: `bunx --no-install` exits 1 rather than
-fetching one, so the version that runs is always the one `package.json` pins. The commit hooks run the
-same tools the gate runs, on the files you stage, and check every commit message before it is recorded.
-The push hook runs the gate's quick form over the whole tree and refuses the push when it fails.
+Install before the first commit. That installs the dependencies and the git hooks, which a fresh clone
+lacks until it runs. The commit hooks run the same tools the gate runs, on the files you stage, and check
+every commit message before it is recorded. The push hook runs the gate's quick form over the whole tree
+and refuses the push when it fails.
+
+Every hook job resolves its tool with `bunx --no-install`, which exits 1 on a missing package and fetches
+nothing. The version that runs is therefore always the one `package.json` pins. The hook script that
+`lefthook install` writes fails open. When it finds no lefthook binary, as with `node_modules` gone, it
+prints `Can't find lefthook in PATH` and exits 0. The commit or push then goes through unchecked. CI's
+`commits` and `gate` jobs are the control.
 
 [docs/dev.md](docs/dev.md#prerequisites) names what to install, and its first-run steps go from a fresh
 clone to a green gate.
@@ -68,8 +73,8 @@ type(scope): subject
 body
 ```
 
-The type is one of those `@commitlint/config-conventional` accepts: `feat`, `fix`, `docs`, `style`,
-`refactor`, `perf`, `test`, `build`, `ci`, `chore` and `revert`. Release notes come from the type, so pick
+The type is one of those `@commitlint/config-conventional` accepts, listed under `type-enum` in what
+`bunx --no-install commitlint --print-config` prints. Release notes come from the type, so pick
 the one that says what the change does to a user rather than how it was made. A tooling or configuration
 change takes a type `release-please-config.json` hides, `chore` or `ci`, never `fix`, `feat` or `build`,
 because a published type opens a release pull request ([Releases](#releases)).
@@ -78,9 +83,11 @@ The scope is optional. A change that belongs to no single area names none. `.git
 lists each scope and what it covers, and commitlint accepts no other. Omit the scope rather than invent
 one. A new area earns a scope in that file, in the change that adds the area.
 
-The header and every body line stay within 72 characters. A squash merge lands the pull request title
-as the commit subject with ` (#NNN)` appended, and CI lints that composed subject, so keep the title
-itself within 65.
+The header and every body line stay within 72 characters. A squash merge of a one-commit pull request
+lands that commit's subject and body. A longer pull request lands under its title. GitHub appends ` (#NNN)`
+to either subject. CI lints the title with that suffix and each commit as written. Keep the title within
+65, and a one-commit pull request's subject equal to its title, so the title's lint covers the subject
+that lands.
 
 The body carries what the diff cannot show: what was wrong, what the change does now, and what was
 deliberately not done. Change narrative belongs here and never in a code comment, which describes the code
