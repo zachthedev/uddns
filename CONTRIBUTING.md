@@ -86,7 +86,9 @@ the one that says what the change does to a user rather than how it was made. A 
 change takes a type `release-please-config.json` hides, `chore` or `ci`, never `fix` or `feat`, because a
 published type opens a release pull request ([Releases](#releases)).
 
-A revert is written `revert: <the reverted header>`. commitlint skips git's `Revert "..."` subject
+A revert is written `revert(<scope>): <what is undone, in fresh words>`, with a `Refs: <sha>` footer
+naming each reverted commit. The scope and length rules below apply to it as to any commit. A subject in
+fresh words fits them, and a copied header often does not. commitlint skips git's `Revert "..."` subject
 unchecked. release-please cannot parse it, so that revert never reaches the changelog.
 
 `changelog-sections` in `release-please-config.json` hides a type from the changelog, not from the
@@ -226,8 +228,8 @@ Nobody edits any of the three by hand.
 What makes a change releasable is `changelog-sections` in `release-please-config.json`. release-please
 renders the changelog body first and opens no release pull request when it comes out empty, so a hidden
 type releases nothing and a visible one gives a patch, `feat` a minor, and `!` or a `BREAKING CHANGE:`
-footer a major. Hiding decides releasability, not presentation. The commit types the changelog hides,
-and the reason each is hidden, are that file's record.
+footer a major. Hiding decides releasability, not presentation. The commit types the changelog hides are
+that file's record. [Commit messages](#commit-messages) says why a change takes one.
 
 The version started at 1.0.0 rather than 0.x, deliberately. The worker's interface is its URL contract:
 the query parameters a device sends and the JSON it gets back. That contract was settled at v1.0.0 and
