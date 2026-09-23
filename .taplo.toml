@@ -1,0 +1,8 @@
+# Every TOML file this repository authors, formatted by `taplo fmt`. The gate
+# runs `taplo fmt --check --config .taplo.toml`. mise.lock is written by
+# `mise lock` and carries no .toml extension, so the pattern leaves it alone.
+# taplo reads no .gitignore, so this exclude list is the one control over what
+# it walks: node_modules, and Claude Code's worktrees, each of which holds its
+# own copy of every file here.
+include = ["**/*.toml"]
+exclude = ["node_modules/**", ".claude/worktrees/**"]

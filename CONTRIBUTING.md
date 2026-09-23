@@ -26,17 +26,51 @@ clone to a green gate.
 bun run check
 ```
 
-One command, and it is the whole gate. `bun run check:quick` is the same gate without its test row, and is
-what the push hook runs. `bun run check:rows` prints the rows and runs nothing. A row that is a
-`package.json` script runs alone as `bun run <name>`; the rows command shows which. CI runs `bun run check`
-on Linux, Windows and macOS in the `gate` job, so a green run on your machine is a green run there. Run
-it before you push. A new check is a row in `scripts/check.ts`, never a step in a workflow.
+One command, and it is the whole gate. `bun run check:quick` is the same gate without its test row, and the
+push hook runs it. `bun run check:rows` prints the rows and runs nothing. A row that is a `package.json`
+script runs alone as `bun run <name>`; the rows command shows which. CI's `gate` job runs the same gate on
+Linux, Windows and macOS, so a green run on your machine is a green run there. Run it before you push. A new
+check is a row in `scripts/check.ts`, never a step in a workflow.
+
+CI and the push hook run the gate by its file, `bun scripts/check.ts`, so no `node_modules/.bin` sits ahead of
+`PATH` before the gate refuses a tracked `node_modules` path. `bun run check` puts it there first, so on a pull
+request branch that commits `node_modules/.bin/bun`, that `bun` runs before the gate does. A `preload` in a
+committed `bunfig.toml` runs before the first line of any Bun command, the gate's file included, so no row can
+stop the first run on such a branch. Read a branch's diff before running anything from it. Install a branch you
+have not read with `bun install --frozen-lockfile --ignore-scripts`, which runs no package's install script.
+
+Before any row, the gate refuses to run beside a tracked env file Bun loads (`.env`, `.env.local`, and the
+`development`, `production` and `test` pairs) or a tracked path under `node_modules`. Bun loads such an env file
+into every process the gate starts, and `bun install` keeps a committed `node_modules` file. A template such as
+`.env.local.template` passes, and so does your own untracked env file.
+
+No row resolves a program from the machine's `PATH`. Every package runs from its path under `node_modules/`,
+every other tool resolves through `mise which`, and Bun is the process running the gate. `bun run` would hand a
+package whose bin starts `#!/usr/bin/env node` to the first `node` on `PATH`, so no row goes through it. The
+programs the gate expects on `PATH` are the prerequisites [docs/dev.md#prerequisites](docs/dev.md#prerequisites)
+names. Each one starts from an absolute `PATH` entry outside the checkout alone. The gate never reads the working
+directory for a program, and on Windows it tries `PATHEXT`'s extensions in their order.
+
+The `tools` row reads `mise.toml` and `mise.lock` against the expectations in `scripts/tools.ts`, and installs
+from the lockfile only after that read passes. `mise.toml` holds `[tools]`, `[tool_config]` and `[settings]`
+alone, and the last two equal the values in `scripts/tools.ts` exactly, because mise runs a `[hooks]`, `[env]` or
+`[vars]` table on install. Every key of `mise.lock` is one `scripts/tools.ts` names. The row refuses every other file
+mise reads as config or a lockfile in the root, such as `mise.local.toml`, `.tool-versions` or `.miserc.toml`,
+because mise merges each one, and a lockfile beside it, over `mise.lock`. It refuses a link at the root or under
+`.config`, `.mise` or `mise`, and a root file named like a program the gate starts: `bun`, `gh`, `git` or `mise`,
+with any extension, beside `bun.lock` and the two mise files. Every mise command the gate starts carries an
+environment built from a short list: the temporary directory, the Unix home, a proxy, the Windows folders the
+system reports, and the gate's own mise settings. No other variable reaches mise, so a personal mise setting
+never changes the gate. `mise.lock` pins `linux-x64`, `macos-arm64` and `windows-x64`, and a contributor on another
+platform relocks in a pull request.
 
 The gate is a function of the tree: it runs offline and means the same thing against a commit from a
-year ago. One row is not, by choice. In `bun run check`, zizmor runs online when a GitHub token is at hand
-(`GH_TOKEN`, else `gh auth token`), so its advisory and stale-ref audits can read GitHub, and that token
-reaches zizmor's process alone. `bun run check:quick` runs it offline, so the hook needs no network and no
-token, and `ZIZMOR_OFFLINE=true` forces offline for the full gate.
+year ago. One row is not, by choice. In `bun run check`, zizmor runs online when `gh auth token` answers,
+so its advisory, impostor-commit and version-comment audits can read GitHub, and that answer reaches
+zizmor's process alone. The gate takes every GitHub token variable its tools read out of the rows'
+environment, so no row inherits one. zizmor runs offline otherwise: in CI, where no step hands the gate a
+token; in `bun run check:quick`, so the hook needs no network and no token; and under
+`ZIZMOR_OFFLINE=true`. The zizmor row prints which way it ran on every run.
 
 Two environment variables change what the `cf-typegen:check` row generates, and neither is set by
 default: `CLOUDFLARE_INCLUDE_PROCESS_ENV=true` copies the whole shell environment into `Env`, and
@@ -56,8 +90,8 @@ Checks that run in CI and not in the gate, each with the reason it sits outside:
 - `Secret scan` runs trufflehog over the pull request's base and head commits with the official action,
   which no working machine has.
 - `workflows` runs actionlint and zizmor online over `.github/workflows` from the shared workflow, so
-  zizmor's advisory and stale-ref audits read GitHub with the job's token on every pull request, whatever
-  the contributor's machine holds.
+  zizmor's advisory, impostor-commit and version-comment audits read GitHub with the job's token on every
+  pull request, whatever the contributor's machine holds. It is the one job that hands zizmor a token.
 - `dependency-review` compares the dependency manifests against the pull request's base. An advisory is a
   function of the world rather than of the tree, so the same commit passes today and fails tomorrow with
   nothing changed; that is not a gate row. A pull request is where blocking is right, because the fix is a
@@ -145,6 +179,9 @@ neither `!` nor a `BREAKING CHANGE:` footer, because either one cuts a major rel
 - A test states what the code is supposed to do, derived from the requirement, never copied from what the
   code printed. A test that fails first is doing its job.
 - Table-driven cases are the default where several inputs share one assertion.
+- The gate's own tests, `scripts/*.test.ts`, run under `bun test` in the `scripts:test` row, because they call
+  Bun's APIs. They start no real gh, git or mise: each case hands the code a stand-in, by its path or first on
+  `PATH`.
 - A test that reads a file in the repository belongs in the `node` project and reads it through the tool
   that owns it, never by regex over the text.
 
@@ -253,7 +290,7 @@ follows the flip. A draft that is never approved ships nothing, and a failed rel
 - Nobody hand-edits a file release-please owns ([Releases](#releases)).
 - A commit never carries a scope outside `.github/commit-scopes.json`, and a tooling change never takes a
   type that cuts a release ([Commit messages](#commit-messages)).
-- No workflow lists a check as a step. CI calls `bun run check`, and a check that cannot run locally sits
+- No workflow lists a check as a step. CI calls `bun scripts/check.ts`, and a check that cannot run locally sits
   in `ci.yml` with a comment saying why ([The gate](#the-gate)).
 - No document restates a list another file owns. A command, a path or a label is named; a list, a table or
   a procedure has one home and every other file links to it. `check:rows` prints the gate's rows,

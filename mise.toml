@@ -5,11 +5,13 @@
 # A bare name comes from mise's registry, which routes it to a release artifact
 # through the aqua backend. mise.lock holds the artifact each version resolved
 # to, per platform in lockfile_platforms, and the gate reads that file against
-# the owner, host and provenance scripts/tools.ts expects before anything
-# installs from it. `mise lock` rewrites it after any edit to [tools].
+# the exact artifact urls, api prefixes and provenance scripts/tools.ts expects
+# before anything installs from it. `mise lock` rewrites it after any edit to [tools].
 #
-# The settings below are what mise reads; the gate does not assert them. A
-# MISE_ variable outranks any of them for the process that carries it.
+# This file holds [tools], [tool_config] and [settings] alone, and
+# scripts/tools.ts holds the last two as well, compared whole: another table,
+# or a setting changed here and not there, is a finding. A MISE_ variable
+# outranks any setting for the process that carries it.
 
 [tools]
 # actionlint and zizmor attest their releases, so mise.lock records provenance
@@ -41,6 +43,13 @@ locked = true
 lockfile = true
 # The platforms mise.lock pins, which are the platforms the ci matrix runs.
 lockfile_platforms = ["linux-x64", "macos-arm64", "windows-x64"]
+# mise falls back to a lockfile entry's url_api when a HEAD on its url fails,
+# and that address names an asset by a bare id nothing offline ties to a
+# version. This rule sends every such address to a host that does not resolve,
+# so the fallback fails rather than installing another release. The gate
+# asserts the rule and pins the same map through MISE_URL_REPLACEMENTS on its
+# install, because a config file mise reads later can replace this one.
+url_replacements = { "regex:^https://api\\.github\\.com/repos/[^/]+/[^/]+/releases/assets/.*$" = "https://url-api-refused.invalid/" }
 # Every install re-verifies an attested artifact against its attestation. The
 # expectation comes from the lockfile's own entry, so this arms the downgrade
 # refusal for an entry that claims provenance and replaces none of the gate's

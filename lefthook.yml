@@ -34,9 +34,11 @@ pre-push:
   jobs:
     # The gate without its test row, so the hook passes on a maintainer's
     # machine whatever its temp path is; a hook that cannot pass gets bypassed,
-    # and a bypassed hook guards nothing. CI's gate job runs the whole of
-    # `bun run check`, tests included, on three platforms. The rows live in
-    # scripts/check.ts alone. The hook runs over the working tree, so
-    # uncommitted edits count toward the result.
+    # and a bypassed hook guards nothing. CI's gate job runs the whole gate,
+    # tests included, on three platforms. The rows live in scripts/check.ts
+    # alone. The hook runs over the working tree, so uncommitted edits count
+    # toward the result. It runs by its file, not through bun run, so no
+    # node_modules/.bin sits ahead of PATH before the gate refuses a tracked
+    # node_modules path.
     - name: check
-      run: bun run check:quick
+      run: bun scripts/check.ts --quick
