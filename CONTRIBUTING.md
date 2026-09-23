@@ -83,18 +83,39 @@ body
 The type is one of those `@commitlint/config-conventional` accepts, listed under `type-enum` in what
 `bunx --no-install commitlint --print-config` prints. Release notes come from the type, so pick
 the one that says what the change does to a user rather than how it was made. A tooling or configuration
-change takes a type `release-please-config.json` hides, `chore` or `ci`, never `fix`, `feat` or `build`,
-because a published type opens a release pull request ([Releases](#releases)).
+change takes a type `release-please-config.json` hides, `chore` or `ci`, never `fix` or `feat`, because a
+published type opens a release pull request ([Releases](#releases)).
+
+A revert is written `revert: <the reverted header>`. commitlint skips git's `Revert "..."` subject
+unchecked. release-please cannot parse it, so that revert never reaches the changelog.
+
+`changelog-sections` in `release-please-config.json` hides a type from the changelog, not from the
+history. Every version heading after 1.0.0 links GitHub's compare view from the previous tag. That view
+and `git log <previous tag>..<tag>` list every change in a release, hidden types included.
 
 The scope is optional. A change that belongs to no single area names none. `.github/commit-scopes.json`
 lists each scope and what it covers, and commitlint accepts no other. Omit the scope rather than invent
 one. A new area earns a scope in that file, in the change that adds the area.
 
 The header and every body line stay within 72 characters. A squash merge of a one-commit pull request
-lands that commit's subject and body. A longer pull request lands under its title. GitHub appends ` (#NNN)`
-to either subject. CI lints the title with that suffix and each commit as written. Keep the title within
-65, and a one-commit pull request's subject equal to its title, so the title's lint covers the subject
-that lands.
+lands that commit's subject and body. A longer pull request lands under its title, with its commits as
+bullets in the body. release-please reads the title's type alone, so the title takes the type of the pull
+request's most user-facing commit. GitHub appends ` (#NNN)` to either subject. CI lints the title with
+that suffix and each commit as written. Keep the title within 65, and a one-commit pull request's subject
+equal to its title, so the title's lint covers the subject that lands.
+
+A squash that landed under the wrong type is corrected in the merged pull request's description, before
+the release pull request merges. release-please runs on the next push to `main` and reads an
+override block there in place of the landed message. Each header carries its ` (#NNN)`. A blank line
+separates two headers:
+
+```text
+BEGIN_COMMIT_OVERRIDE
+fix(scope): subject (#NNN)
+
+chore(scope): subject (#NNN)
+END_COMMIT_OVERRIDE
+```
 
 The body carries what the diff cannot show: what was wrong, what the change does now, and what was
 deliberately not done. Change narrative belongs here and never in a code comment, which describes the code
