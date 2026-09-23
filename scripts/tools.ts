@@ -303,13 +303,34 @@ export async function lockfileFindings(): Promise<string[]> {
         `${LOCK} records backend ${String(entry['backend'])} for ${tool.key}, and the tool comes from ${coordinate}`,
       );
     }
+    // Every platform table the entry carries is asserted, not only the ones
+    // lockfile_platforms names. A table for another platform is what a
+    // contributor on that platform installs from under --locked, and one the
+    // file does not name is refused rather than read past.
+    const recorded = Object.keys(entry)
+      .filter((key) => key.startsWith('platforms.'))
+      .map((key) => key.slice('platforms.'.length));
+    // mise reads a nested [tools.<key>.platforms.<name>] table too, which
+    // parses to a plain `platforms` key the filter above never sees. mise lock
+    // writes the quoted spelling alone, so the nested one is refused whole.
+    if ('platforms' in entry) {
+      found.push(
+        `${LOCK} records a nested platforms table for ${tool.key}, and mise lock writes the quoted "platforms.<name>" spelling. Write it again with: ${RELOCK}`,
+      );
+    }
     for (const platform of pins.value.platforms) {
-      const platformEntry: unknown = entry[`platforms.${platform}`];
-      if (platformEntry === undefined) {
+      if (!recorded.includes(platform)) {
         found.push(`${LOCK} records no ${platform} entry for ${tool.key}. Write it again with: ${RELOCK}`);
+      }
+    }
+    for (const platform of recorded) {
+      if (!pins.value.platforms.includes(platform)) {
+        found.push(
+          `${LOCK} records a ${platform} entry for ${tool.key}, and lockfile_platforms in ${PINS} does not name it`,
+        );
         continue;
       }
-      found.push(...findingsForPlatform(tool, version, platform, platformEntry));
+      found.push(...findingsForPlatform(tool, version, platform, entry[`platforms.${platform}`]));
     }
   }
   return found;
