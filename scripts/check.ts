@@ -139,21 +139,16 @@ function zizmor(quick: boolean): void {
   // GitHub, and that is the one result of the gate that can change while the
   // tree stands still. check:quick runs offline, so the push hook needs no
   // network and no token, and ZIZMOR_OFFLINE=true forces offline for the rest.
+  // The input is the repository root, so zizmor audits every kind it collects:
+  // workflows, action definitions and a Dependabot config. Collection honors
+  // .gitignore, which keeps node_modules and .claude/worktrees out.
   const token = quick || process.env['ZIZMOR_OFFLINE'] !== undefined ? undefined : githubToken();
   const online = token !== undefined;
   const mode = online ? [] : ['--offline'];
   const env: Readonly<Record<string, string>> = online ? { GH_TOKEN: token } : {};
   expectClean(
     `zizmor (${online ? 'online' : 'offline'})`,
-    [
-      binary('zizmor'),
-      '--no-progress',
-      '--strict-collection',
-      '--config',
-      '.github/zizmor.yml',
-      ...mode,
-      '.github/workflows',
-    ],
+    [binary('zizmor'), '--no-progress', '--strict-collection', '--config', '.github/zizmor.yml', ...mode, '.'],
     env,
   );
 }
@@ -204,7 +199,7 @@ const rows: readonly Row[] = [
   },
   {
     name: 'zizmor',
-    checks: 'zizmor --strict-collection over .github/workflows, online in check and offline in check:quick',
+    checks: 'zizmor --strict-collection over the repository root, online in check and offline in check:quick',
     check: zizmor,
   },
   { name: 'test', checks: 'vitest run --coverage, left out by check:quick', check: test, slow: true },
