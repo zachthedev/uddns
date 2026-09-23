@@ -326,10 +326,11 @@ describe('RefusalCounter guards', () => {
   });
 
   it('does not raise the alert again when the response carrying it is lost', async () => {
-    // The flag lives with the tally rather than being derived from a
-    // before-and-after comparison at the caller. An add whose write lands
-    // but whose response is lost would take a transition with it, and every
-    // later call that day would see a tally already past the line.
+    // `warned` is written with the tally that earned the alert, so a later
+    // call that day does not raise it again, even when the response carrying
+    // it was lost. The second token is the control: it stays silent below the
+    // line and raises the alert on the call that reaches it, so the silence
+    // above comes from `warned` and not from the count.
     const counter = env.REFUSALS.getByName('lost-response-token');
     await counter.add(today, names(100, 'a'));
     // Stand in for the lost response: the state now says warned, and a

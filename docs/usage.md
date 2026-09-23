@@ -97,7 +97,7 @@ creates one instance. Each holds a single key, keeps at most 200 distinct names,
 a day before the tally goes quiet, and clears itself 24 to 48 hours after the last refusal, so the bound is
 the reclaim window rather than the decision to count.
 
-Crossing 100 **distinct** names in a day logs a warning to Workers Logs, because `/history` is scoped to
+Reaching 100 **distinct** names in a day logs a warning to Workers Logs, because `/history` is scoped to
 the very token being counted: without the log the tally would only ever be visible to the caller it
 describes. Distinct rather than total, because a DDNS client polls every two minutes, so one hostname typed
 wrong passes any total given an afternoon. Variety is what a caller sweeping for names it does not hold
