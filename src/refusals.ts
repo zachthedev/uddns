@@ -190,7 +190,12 @@ export class RefusalCounter extends DurableObject<Env> {
     if (names.length === 0) {
       return EMPTY;
     }
-    const stored = await this.ctx.storage.get(STATE_KEY);
+    // Read and written synchronously, with nothing awaited in between, so no
+    // other call can read the tally this one is about to replace. The input
+    // gate keeps new requests out across a storage await. It does not stop a
+    // wrapper around this class from starting a call it already holds. The
+    // vitest pool starts its next queued call as soon as this one yields.
+    const stored = this.ctx.storage.kv.get(STATE_KEY);
     const state = isRefusalState(stored) ? stored : undefined;
     if (state !== undefined && state.day > day) {
       // Zero, not the stored tally: the caller reads the return as "this
@@ -218,21 +223,43 @@ export class RefusalCounter extends DurableObject<Env> {
     // and only when the day changes: a per-call reset would double the
     // storage writes a caller can drive, and a timer from first contact
     // would wipe a tally still being added to.
+    let armed: Promise<void> | undefined;
     if (current === undefined) {
-      // Before the write, not after. An alarm with no state behind it
-      // fires once and deletes nothing; state with no alarm behind it is
-      // an instance that never reclaims itself.
-      await this.ctx.storage.setAlarm(Date.parse(`${day}T00:00:00.000Z`) + RECLAIM_AFTER_DAY_MS);
+      // Awaited after the write, so the read-modify-write holds no await.
+      // setAlarm reports a refusal through its promise, read only after the
+      // write. State with no alarm behind it is an instance that never
+      // reclaims itself, so a refusal deletes the tally this call wrote. The
+      // refusal is the error thrown, and a delete that fails is logged.
+      // Issuing it first only keeps a synchronous throw from leaving a
+      // tally. An alarm with no state behind it fires once and deletes
+      // nothing, so a failed write leaves the alarm standing. The write's
+      // error is the one thrown, and a refusal arriving with it is logged.
+      armed = this.ctx.storage.setAlarm(Date.parse(`${day}T00:00:00.000Z`) + RECLAIM_AFTER_DAY_MS);
     }
-    // `warned` is written with the tally that earned it, so the record of
-    // having reported survives whatever happens to this call's response.
-    await this.ctx.storage.put(STATE_KEY, {
-      day,
-      n: total,
-      names: kept,
-      w: (current?.w ?? 0) + 1,
-      warned: alert || current?.warned === true,
-    } satisfies RefusalState);
+    try {
+      // `warned` is written with the tally that earned it, so the record of
+      // having reported survives whatever happens to this call's response.
+      this.ctx.storage.kv.put(STATE_KEY, {
+        day,
+        n: total,
+        names: kept,
+        w: (current?.w ?? 0) + 1,
+        warned: alert || current?.warned === true,
+      } satisfies RefusalState);
+    } catch (error) {
+      await armed?.catch((refused: unknown) => {
+        console.error('refusals: the alarm was refused as the write failed', refused);
+      });
+      throw error;
+    }
+    await armed?.catch((refused: unknown) => {
+      try {
+        this.ctx.storage.kv.delete(STATE_KEY);
+      } catch (error) {
+        console.error('refusals: the tally outlived its refused alarm', error);
+      }
+      throw refused;
+    });
     return { total, distinct: kept.length, hostnames: kept, alert };
   }
 
