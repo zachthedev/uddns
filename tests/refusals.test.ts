@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
-import { runDurableObjectAlarm } from 'cloudflare:test';
-import { describe, it, expect } from 'vitest';
+import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
+import { describe, it, expect, vi } from 'vitest';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -75,6 +75,22 @@ describe('RefusalCounter', () => {
     await Promise.all(
       Array.from({ length: 50 }, async (_unused, i) => counter.add(today, [`host-${String(i)}.example.com`])),
     );
+
+    await expect(counter.tally(today)).resolves.toMatchObject({ total: 50, distinct: 50 });
+  });
+
+  it('loses nothing when calls interleave inside the object', async () => {
+    // Calls started inside the instance share one microtask queue. Any await
+    // between the read and the write in add then lets another call run. The
+    // case above reaches that only when the harness queues two calls back to
+    // back. This one reaches it on every run.
+    const counter = env.REFUSALS.getByName('interleaved-token');
+
+    await runInDurableObject(counter, async (instance) => {
+      await Promise.all(
+        Array.from({ length: 50 }, async (_unused, i) => instance.add(today, [`host-${String(i)}.example.com`])),
+      );
+    });
 
     await expect(counter.tally(today)).resolves.toMatchObject({ total: 50, distinct: 50 });
   });
@@ -335,5 +351,87 @@ describe('RefusalCounter guards', () => {
     await runDurableObjectAlarm(counter);
 
     await expect(counter.tally(today)).resolves.toEqual({ total: 0, distinct: 0, hostnames: [] });
+  });
+
+  // The day window keeps every alarm ahead of a real clock, so only a clock
+  // set before the epoch gets setAlarm to refuse one. Two and a half days
+  // before it, the window still admits today, and today's alarm falls a day
+  // below zero.
+  const BEFORE_THE_EPOCH = -2.5 * DAY_MS;
+
+  it('keeps no tally when the alarm that would reclaim it is refused', async () => {
+    // State with no alarm behind it is an instance that never reclaims
+    // itself, so the refusal has to take the tally with it.
+    const counter = env.REFUSALS.getByName('refused-alarm-token');
+
+    await runInDurableObject(counter, async (instance, state) => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(BEFORE_THE_EPOCH);
+      try {
+        await expect(instance.add(dayAt(0), ['a.example.com'])).rejects.toThrow(/setAlarm/);
+      } finally {
+        clock.mockRestore();
+      }
+
+      await expect(state.storage.getAlarm()).resolves.toBeNull();
+      await expect(state.storage.list()).resolves.toEqual(new Map());
+    });
+  });
+
+  it('rejects with the write error and logs the refused alarm when both fail at once', async () => {
+    // The write's error is the one worth reporting, and the refusal beside
+    // it must not go unhandled: vitest fails the run on one. Storage cannot
+    // be exhausted from a test, so the write alone is a double, restored
+    // before anything is read back.
+    const counter = env.REFUSALS.getByName('double-failure-token');
+    const exhausted = new Error('storage exhausted');
+
+    await runInDurableObject(counter, async (instance, state) => {
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(BEFORE_THE_EPOCH);
+      const write = vi.spyOn(state.storage.kv, 'put').mockImplementation(() => {
+        throw exhausted;
+      });
+      try {
+        await expect(instance.add(dayAt(0), ['a.example.com'])).rejects.toBe(exhausted);
+        expect(write).toHaveBeenCalledOnce();
+        expect(logged).toHaveBeenCalledExactlyOnceWith(
+          expect.stringContaining('alarm'),
+          expect.objectContaining({ message: expect.stringMatching(/setAlarm/) }),
+        );
+      } finally {
+        write.mockRestore();
+        clock.mockRestore();
+        logged.mockRestore();
+      }
+
+      await expect(state.storage.getAlarm()).resolves.toBeNull();
+      await expect(state.storage.list()).resolves.toEqual(new Map());
+    });
+  });
+
+  it('rejects with the refusal and logs the failed delete when the cleanup fails too', async () => {
+    // The refusal is what leaves the tally unreclaimable, so it stays the
+    // error thrown, and the delete that could not clear the tally is logged
+    // beside it. Storage cannot be made to fail from a test, so the delete
+    // alone is a double.
+    const counter = env.REFUSALS.getByName('failed-cleanup-token');
+    const stuck = new Error('delete failed');
+
+    await runInDurableObject(counter, async (instance, state) => {
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(BEFORE_THE_EPOCH);
+      const cleanup = vi.spyOn(state.storage.kv, 'delete').mockImplementation(() => {
+        throw stuck;
+      });
+      try {
+        await expect(instance.add(dayAt(0), ['a.example.com'])).rejects.toThrow(/setAlarm/);
+        expect(cleanup).toHaveBeenCalledOnce();
+        expect(logged).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('alarm'), stuck);
+      } finally {
+        cleanup.mockRestore();
+        clock.mockRestore();
+        logged.mockRestore();
+      }
+    });
   });
 });
