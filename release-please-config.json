@@ -18,7 +18,7 @@
         { "type": "fix", "section": "Bug Fixes" },
         { "type": "perf", "section": "Performance" },
         { "type": "revert", "section": "Reverts" },
-        { "type": "build", "section": "Build" },
+        { "type": "build", "section": "Build", "hidden": true },
         { "type": "chore", "section": "Chores", "hidden": true },
         { "type": "ci", "section": "Continuous Integration", "hidden": true },
         { "type": "docs", "section": "Documentation", "hidden": true },
