@@ -9,9 +9,13 @@ carries the conventions; this file carries the machine.
   manager, the script runner and the runtime for `scripts/`.
 - [mise](https://mise.jdx.dev), any current release. It installs the tools the gate runs that no package
   in `bun.lock` ships. `mise.toml` names each tool, its version and the platforms `mise.lock` pins, which
-  are the platforms CI runs; mise refuses any other.
-- [GitHub CLI](https://cli.github.com), optional. When `gh auth token` succeeds, `bun run check` runs
-  zizmor online and hands it that token, so its advisory and stale-ref audits can read GitHub.
+  are the platforms CI runs; mise refuses any other. Keep no other mise file in the checkout, not even an
+  untracked one: mise reads every config and lockfile it finds, `mise.local.toml`, `.mise.toml`,
+  `.tool-versions` and `.config/mise/` among them, so the gate's `tools` row refuses any mise file but
+  those two.
+- [GitHub CLI](https://cli.github.com), optional. When `gh auth token` answers, `bun run check` runs
+  zizmor online and hands that answer to zizmor alone, so its advisory, impostor-commit and
+  version-comment audits can read GitHub.
 
 Every other tool, wrangler included, arrives through `bun install` at the version `package.json` pins.
 
@@ -29,8 +33,8 @@ offline. `bun run check:rows` prints what the gate covers.
 
 On Windows, the Durable Object and D1 tests run in workerd, which keeps SQLite files under the temp
 directory. A long temp path pushes them past `MAX_PATH`, and every such test fails with `internal error`
-and nothing more. Point `TEMP` at a short path for the run. The push hook runs `bun run check:quick`,
-the gate without its test row, for this reason.
+and nothing more. Point `TEMP` at a short path for the run. The push hook runs the gate's quick form,
+without its test row, for this reason.
 
 ## Running it
 
@@ -59,7 +63,9 @@ domain and access key. [docs/deploy.md](deploy.md) says what a deploy does.
   file is absent until `git checkout -- worker-configuration.d.ts` restores it.
 - `mise.lock`, by `mise lock` after any edit to `[tools]` in `mise.toml`. A release with no asset digest
   gets its checksums computed once from the artifacts at the recorded urls; a relock keeps them, and
-  `mise.toml` says which tool and how, beside its pin.
+  `mise.toml` says which tool and how, beside its pin. The gate holds each recorded url to the asset name
+  `scripts/tools.ts` carries for that tool and platform, so an asset an upstream release renames, or a
+  platform added to `lockfile_platforms`, is an edit there in the same diff.
 - `CHANGELOG.md`, `package.json`'s version and `.release-please-manifest.json`, by release-please. Nobody
   edits those by hand; [CONTRIBUTING.md](../CONTRIBUTING.md#releases) says why.
 

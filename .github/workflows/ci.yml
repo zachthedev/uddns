@@ -10,11 +10,21 @@ on:
   push:
     branches: [main]
 
+# The four pins keep jdx/mise-action's own mise commands to mise.toml. The
+# gate starts every mise command it runs with these and the rest of its own
+# environment, never with the job's.
+env:
+  MISE_OVERRIDE_CONFIG_FILENAMES: mise.toml
+  MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES: none
+  MISE_ENV: ''
+  MISE_AUTO_ENV: 'false'
+
 jobs:
   # The gate a contributor runs locally, called and never restated, so the two
-  # cannot drift. bun run check:rows prints what it covers. It asserts mise.lock
-  # against mise.toml, then installs the tools, then runs every check, in that
-  # order by construction.
+  # cannot drift. bun run check:rows prints what it covers. Its tools row
+  # asserts mise.lock against mise.toml and then installs, in that order by
+  # construction. No step here names a token, so the gate's zizmor runs
+  # offline, and zizmor's online audits run in the workflows job below.
   gate:
     name: gate
     strategy:
@@ -28,6 +38,27 @@ jobs:
       contents: read
 
     steps:
+      # Before the checkout, because the action runs mise --version and mise ls
+      # in a workspace it trusts, and a pull request's mise.toml would load
+      # there before the gate refuses it. mise alone, verified against the
+      # release's signed checksums, and its bin directory stays on PATH.
+      # install: false, because the gate asserts mise.lock before it installs
+      # from it. cache: false for the same reason: nothing restored ahead of the
+      # assertions. github_token: '', because a locked install makes no GitHub
+      # API request, and the default exports the job token as MISE_GITHUB_TOKEN
+      # to every later step. env: false and export_path: false, so nothing
+      # mise.toml sets reaches a later step: the gate runs each tool by the path
+      # mise which prints.
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.11
+          install: false
+          cache: false
+          github_token: ''
+          env: false
+          export_path: false
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,27 +71,19 @@ jobs:
           # checks mean without a commit that says so.
           bun-version-file: package.json
 
-      # mise alone, verified against the release's signed checksums. install:
-      # false, because the gate asserts mise.lock before it installs from it,
-      # and an install here would put the bytes on disk before the assertions
-      # read the file. cache: false for the same reason: nothing restored ahead
-      # of the assertions.
-      - name: Setup mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          version: 2026.9.11
-          install: false
-          cache: false
-
+      # --ignore-scripts, so nothing in the tree runs before the gate: the
+      # root's prepare installs git hooks, which CI never runs, and a
+      # dependency's install script only checks or relinks a native binary the
+      # gate's tools find without it.
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
-      # GH_TOKEN, so the gate's zizmor runs online here as it does for a
-      # contributor whose gh auth token succeeds. The job token is read-only.
+      # The file itself, not `bun run check`: the script runner puts the
+      # checkout's node_modules/.bin ahead of PATH, where a committed bun would
+      # run in place of the gate, and the gate refuses a tracked node_modules
+      # path before any row.
       - name: Verify
-        run: bun run check
-        env:
-          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/check.ts
 
   # Runs in CI alone: the scan needs the pull request's base and head commits
   # and the official action, which no working machine has. GitHub push

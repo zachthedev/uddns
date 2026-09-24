@@ -85,8 +85,12 @@ jobs:
           # was built by the bun the lockfile was resolved with.
           bun-version-file: package.json
 
+      # --ignore-scripts, so no install script from the tree runs in a job that
+      # holds the deploy's secrets. The deploy needs none: wrangler's bundler
+      # finds esbuild's binary in its platform package, and the deploy runs no
+      # git hook.
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       # scripts/deploy.ts is the single deploy path: it applies D1 migrations,
       # deploys the committed wrangler.jsonc, and syncs the optional ACCESS_KEY

@@ -1,0 +1,103 @@
+// This repository's own call sites for the gate and its installs. The shared
+// gate tests beside this file hold no name of this repository's.
+
+import { expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const ROOT = join(import.meta.dir, '..');
+
+type Table = Record<string, unknown>;
+
+/** `value` as a mapping, or a fixture error naming `what`. */
+function table(value: unknown, what: string): Table {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`fixture: ${what} is not a mapping`);
+  }
+  return value as Table;
+}
+
+/** `value` as a list of mappings, or a fixture error naming `what`. */
+function tables(value: unknown, what: string): Table[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`fixture: ${what} is not a list`);
+  }
+  return value.map((item: unknown) => table(item, what));
+}
+
+/** The parsed YAML file at `path` below the root. */
+function yaml(path: string): Table {
+  return table(Bun.YAML.parse(readFileSync(join(ROOT, path), 'utf8')), path);
+}
+
+/** The steps of `job` in the workflow at `path`. */
+function steps(path: string, job: string): Table[] {
+  return tables(
+    table(table(yaml(path)['jobs'], `${path} jobs`)[job], `${path} ${job}`)['steps'],
+    `${path} ${job} steps`,
+  );
+}
+
+/** The one step named `name` among `list`. */
+function step(list: readonly Table[], name: string): Table {
+  const found = list.filter((item) => item['name'] === name);
+  expect(found).toHaveLength(1);
+  return found[0] ?? {};
+}
+
+// The script runner puts node_modules/.bin first on PATH, so a committed bun
+// there would run in place of the gate. The call sites that decide a merge
+// start the file with a bare bun.
+test("CI's gate job starts the gate file itself, not through the script runner", () => {
+  expect(step(steps('.github/workflows/ci.yml', 'gate'), 'Verify')['run']).toBe('bun scripts/check.ts');
+});
+
+test('the push hook starts the gate file itself, in its quick form', () => {
+  const jobs = tables(table(yaml('lefthook.yml')['pre-push'], 'pre-push')['jobs'], 'pre-push jobs');
+
+  expect(step(jobs, 'check')['run']).toBe('bun scripts/check.ts --quick');
+});
+
+// mise-action runs mise in a workspace it trusts, so a pull request's
+// mise.toml would load there before the gate refuses it.
+test("CI's gate job starts mise before the checkout, and exports nothing mise.toml sets", () => {
+  const list = steps('.github/workflows/ci.yml', 'gate');
+  const names = list.map((item) => item['name']);
+
+  expect(names.indexOf('Setup mise')).toBeGreaterThanOrEqual(0);
+  expect(names.indexOf('Setup mise')).toBeLessThan(names.indexOf('Checkout repository'));
+  expect(table(step(list, 'Setup mise')['with'], 'Setup mise with')).toMatchObject({
+    install: false,
+    cache: false,
+    github_token: '',
+    env: false,
+    export_path: false,
+  });
+});
+
+test('the ci workflow pins the four mise config names for every step', () => {
+  expect(yaml('.github/workflows/ci.yml')['env']).toEqual({
+    MISE_OVERRIDE_CONFIG_FILENAMES: 'mise.toml',
+    MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES: 'none',
+    MISE_ENV: '',
+    MISE_AUTO_ENV: 'false',
+  });
+});
+
+test.each([
+  ['.github/workflows/ci.yml', 'gate'],
+  ['.github/workflows/cd.yml', 'deploy'],
+])('%s job %s installs with no install script', (path: string, job: string) => {
+  expect(step(steps(path, job), 'Install dependencies')['run']).toBe('bun install --frozen-lockfile --ignore-scripts');
+});
+
+test('the package scripts a contributor runs start the gate file', () => {
+  const manifest = table(JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')), 'package.json');
+  const scripts = table(manifest['scripts'], 'package.json scripts');
+
+  expect([scripts['check'], scripts['check:quick'], scripts['check:rows']]).toEqual([
+    'bun scripts/check.ts',
+    'bun scripts/check.ts --quick',
+    'bun scripts/check.ts --rows',
+  ]);
+});

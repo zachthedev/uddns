@@ -12,7 +12,7 @@ bind an agent as they bind a person.
 
 - `bun run check` is the gate. Run it before calling a change done, and never run its steps separately
   as a substitute.
-- `bun run check:quick` is the gate without its test row, and is what the push hook runs.
+- `bun run check:quick` is the gate without its test row, the form the push hook runs.
 - `bun run check:rows` prints the rows and runs nothing. A row that is a `package.json` script runs alone
   as `bun run <name>`.
 
