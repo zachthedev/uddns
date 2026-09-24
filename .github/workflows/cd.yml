@@ -30,7 +30,7 @@ jobs:
       group: release-main
       cancel-in-progress: false
     uses: zachthedev/.github/.github/workflows/release-pr.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
-    secrets: inherit # zizmor: ignore[secrets-inherit]
+    secrets: inherit
 
   # uddns ships no artifact, so artifacts is omitted and the called job flips the draft public
   # and nothing else. The release environment's required reviewer is the human approval before a

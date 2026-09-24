@@ -62,12 +62,12 @@ export const GH_ENVIRONMENT: Readonly<Record<string, string | undefined>> = take
  * @param environment - gh's own token names, handed to gh alone
  * @param timeoutMs - How long gh may take to answer
  */
-export function githubToken(
+export async function githubToken(
   gh: string,
   environment: Readonly<Record<string, string | undefined>> = GH_ENVIRONMENT,
   timeoutMs: number = GH_TIMEOUT_MS,
-): string | undefined {
-  const printed = run([gh, 'auth', 'token'], timeoutMs, environment);
+): Promise<string | undefined> {
+  const printed = await run([gh, 'auth', 'token'], timeoutMs, environment);
   const found = printed.stdout.trim();
   return printed.exitCode === 0 && found.length > 0 ? found : undefined;
 }

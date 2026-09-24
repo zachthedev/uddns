@@ -395,7 +395,7 @@ function parseAuthorization(request: Request): ParsedAuth {
   }
 
   const delimiterIndex = decoded.indexOf(':');
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- matches the control characters RFC 7617 bars from credentials
   if (delimiterIndex === -1 || /[\0-\x1F\x7F]/.test(decoded)) {
     throw new HttpError(401, 'Invalid authorization credentials.');
   }

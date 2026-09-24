@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { githubToken, takeTokens } from './github';
-import { type Answer, isolate, launcherName, spellings, StandIns } from './stand-ins';
+import { type Answer, isolate, launcherName, spellings, StandIns, WINDOWS } from './stand-ins';
 
 // Every stand-in start is a Bun process, and a loaded machine starts one in
 // seconds, so a case gets longer than the runner's five-second default.
@@ -142,10 +142,10 @@ test.each([0, 1, 2])(
 
 /* ///// What gh is handed ///// */
 
-test('githubToken hands gh exactly GH_TOKEN and GITHUB_TOKEN, as given', () => {
+test('githubToken hands gh exactly GH_TOKEN and GITHUB_TOKEN, as given', async () => {
   standIns.answer('gh', { stdout: 'token-from-gh\n' });
 
-  githubToken(standIns.path('gh'), { GH_TOKEN: 'canary-gh', GITHUB_TOKEN: 'canary-github' });
+  await githubToken(standIns.path('gh'), { GH_TOKEN: 'canary-gh', GITHUB_TOKEN: 'canary-github' });
 
   const calls = standIns.calls();
   expect(calls.map((call) => call.args)).toEqual([['auth', 'token']]);
@@ -157,12 +157,12 @@ test('githubToken hands gh exactly GH_TOKEN and GITHUB_TOKEN, as given', () => {
   }
 });
 
-test('githubToken hands gh neither name, in any spelling, when the gate started with neither', () => {
+test('githubToken hands gh neither name, in any spelling, when the gate started with neither', async () => {
   standIns.answer('gh', { exitCode: 1 });
   process.env['gh_token'] = 'stray';
   process.env['Github_Token'] = 'stray';
 
-  githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined });
+  await githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined });
 
   const env = standIns.calls()[0]?.env ?? {};
   expect(standIns.calls()).toHaveLength(1);
@@ -176,7 +176,7 @@ test('the gate hands gh the two names it started with, and no child the other fo
   const extra = Object.fromEntries(CLEARED.map((name) => [name, `canary-${name}`]));
 
   const printed = child(
-    `const { githubToken } = await import(${MODULE}); console.log(githubToken(${JSON.stringify(standIns.path('gh'))}) ?? 'none');`,
+    `const { githubToken } = await import(${MODULE}); console.log((await githubToken(${JSON.stringify(standIns.path('gh'))})) ?? 'none');`,
     extra,
   );
 
@@ -209,28 +209,33 @@ const ANSWERS: readonly AnswerCase[] = [
   { label: 'a gh printing only whitespace is no token', answer: { stdout: ' \n\t\n' }, expected: undefined },
 ];
 
-test.each([...ANSWERS])('$label', ({ answer, expected }: AnswerCase) => {
+test.each([...ANSWERS])('$label', async ({ answer, expected }: AnswerCase) => {
   standIns.answer('gh', answer);
 
-  expect(githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined })).toBe(expected);
+  expect(await githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined })).toBe(expected);
   expect(standIns.calls()).toHaveLength(1);
 });
 
-test('a missing gh is no token', () => {
+test('a missing gh is no token', async () => {
   const absent = join(standIns.dir, launcherName('absent'));
 
-  expect(githubToken(absent, { GH_TOKEN: undefined, GITHUB_TOKEN: undefined })).toBeUndefined();
+  expect(await githubToken(absent, { GH_TOKEN: undefined, GITHUB_TOKEN: undefined })).toBeUndefined();
   expect(standIns.calls()).toEqual([]);
 });
 
 test('a gh that outlives the deadline is no token, and the deadline ends the wait', async () => {
   const sleepMs = 3_000;
   standIns.answer('gh', { stdout: 'late-token\n', sleepMs });
+  // run() kills the launcher's tree with the taskkill PATH names on every
+  // Windows machine. The stand-in runs under the launcher's cmd.exe there.
+  if (WINDOWS) {
+    process.env['PATH'] = [standIns.dir, join(process.env['SYSTEMROOT'] ?? '', 'System32')].join(delimiter);
+  }
   const started = performance.now();
 
-  const token = githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, 300);
+  const token = await githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, 300);
   const waited = performance.now() - started;
-  // The stand-in outlives its killed launcher on Windows; let it finish.
+  // A stand-in the kill missed finishes before the case ends.
   await Bun.sleep(sleepMs);
 
   expect(token).toBeUndefined();

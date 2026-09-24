@@ -3,8 +3,9 @@ import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, sep } from 'node:path';
-import { resolveProgram, run, trackedFindings } from './run';
+import { resolveProgram, run } from './run';
 import { isolate, launcherName, spellings, StandIns, WINDOWS } from './stand-ins';
+import { trackedFindings } from './startup';
 
 // Every stand-in start is a Bun process, and a loaded machine starts one in
 // seconds, so a case gets longer than the runner's five-second default.
@@ -74,44 +75,44 @@ function started(): string[] {
 
 /* ///// The spawn environment ///// */
 
-test('a name run() is not asked to change reaches the child unchanged', () => {
+test('a name run() is not asked to change reaches the child unchanged', async () => {
   process.env['GATE_PASS'] = 'through';
 
-  run([standIns.path('tool')], DEADLINE_MS);
+  await run([standIns.path('tool')], DEADLINE_MS);
 
   expect(standIns.calls()[0]?.env['GATE_PASS']).toBe('through');
 });
 
-test('a name run() sets reaches the child at its value', () => {
-  run([standIns.path('tool')], DEADLINE_MS, { GATE_SET: 'set' });
+test('a name run() sets reaches the child at its value', async () => {
+  await run([standIns.path('tool')], DEADLINE_MS, { GATE_SET: 'set' });
 
   expect(standIns.calls()[0]?.env['GATE_SET']).toBe('set');
 });
 
-test('a name run() sets replaces every inherited spelling of it', () => {
+test('a name run() sets replaces every inherited spelling of it', async () => {
   process.env['gate_case'] = 'inherited';
   process.env['Gate_Case'] = 'inherited';
 
-  run([standIns.path('tool')], DEADLINE_MS, { GATE_CASE: 'set' });
+  await run([standIns.path('tool')], DEADLINE_MS, { GATE_CASE: 'set' });
 
   const env = standIns.calls()[0]?.env ?? {};
   expect(spellings(env, 'GATE_CASE')).toEqual(['GATE_CASE']);
   expect(env['GATE_CASE']).toBe('set');
 });
 
-test('a name passed as undefined is absent from the child in every spelling', () => {
+test('a name passed as undefined is absent from the child in every spelling', async () => {
   process.env['gate_gone'] = 'inherited';
   process.env['GATE_GONE'] = 'inherited';
 
-  run([standIns.path('tool')], DEADLINE_MS, { GATE_GONE: undefined });
+  await run([standIns.path('tool')], DEADLINE_MS, { GATE_GONE: undefined });
 
   expect(spellings(standIns.calls()[0]?.env ?? {}, 'GATE_GONE')).toEqual([]);
 });
 
-test('a process started with inherit false receives the variables given and none of the gate environment', () => {
+test('a process started with inherit false receives the variables given and none of the gate environment', async () => {
   process.env['GATE_PASS'] = 'through';
 
-  run([standIns.path('tool')], DEADLINE_MS, { GATE_SET: 'set' }, { inherit: false });
+  await run([standIns.path('tool')], DEADLINE_MS, { GATE_SET: 'set' }, { inherit: false });
 
   const env = standIns.calls()[0]?.env ?? {};
   expect(env['GATE_SET']).toBe('set');
@@ -120,16 +121,16 @@ test('a process started with inherit false receives the variables given and none
 
 /* ///// How a process ends ///// */
 
-test('the exit code and stdout come back as the process left them', () => {
+test('the exit code and stdout come back as the process left them', async () => {
   standIns.answer('tool', { stdout: 'printed', exitCode: 3 });
 
-  const finished = run([standIns.path('tool')], DEADLINE_MS);
+  const finished = await run([standIns.path('tool')], DEADLINE_MS);
 
   expect(finished).toMatchObject({ exitCode: 3, stdout: 'printed', timedOut: false });
 });
 
-test('a program no PATH entry holds exits 127, saying which and that the working directory is never searched', () => {
-  const finished = run(['gate-absent-program'], DEADLINE_MS);
+test('a program no PATH entry holds exits 127, saying which and that the working directory is never searched', async () => {
+  const finished = await run(['gate-absent-program'], DEADLINE_MS);
 
   expect(finished.exitCode).toBe(127);
   expect(finished.stderr).toContain('gate-absent-program');
@@ -140,11 +141,16 @@ test('a program no PATH entry holds exits 127, saying which and that the working
 test('a process that outlives its deadline is killed, with timedOut and exit -1', async () => {
   const sleepMs = 3_000;
   standIns.answer('tool', { sleepMs });
+  // run() kills the launcher's tree with the taskkill PATH names on every
+  // Windows machine. The stand-in runs under the launcher's cmd.exe there.
+  if (WINDOWS) {
+    process.env['PATH'] = [standIns.dir, join(process.env['SYSTEMROOT'] ?? '', 'System32')].join(delimiter);
+  }
   const begun = performance.now();
 
-  const finished = run([standIns.path('tool')], 300);
+  const finished = await run([standIns.path('tool')], 300);
   const waited = performance.now() - begun;
-  // The stand-in outlives its killed launcher on Windows; let it finish.
+  // A stand-in the kill missed finishes before the case ends.
   await Bun.sleep(sleepMs);
 
   expect(finished.timedOut).toBe(true);
@@ -388,7 +394,7 @@ const PLANTED_CASES = PLACEMENTS.filter((placement) => WINDOWS || !placement.win
 
 test.each(PLANTED_CASES)(
   'run() starts the PATH program, never a $name planted $placement.label',
-  ({ name, placement }: { name: string; placement: Placement }) => {
+  async ({ name, placement }: { name: string; placement: Placement }) => {
     const entry = placement.place(name);
     process.env['PATH'] = [...(entry === undefined ? [] : [entry]), standIns.dir].join(delimiter);
     // The fixture holds only when a bare spawn, with the variable that hides
@@ -398,7 +404,7 @@ test.each(PLANTED_CASES)(
     expect(started()).toEqual([`planted-${name}`]);
     standIns.clear();
 
-    run([name, 'probe'], DEADLINE_MS);
+    await run([name, 'probe'], DEADLINE_MS);
 
     expect(started()).toEqual([name]);
   },
@@ -419,104 +425,96 @@ const BUN_ENV_NAMES: readonly string[] = [
   '.env.test.local',
 ];
 
-/** The arguments of the one git start the case recorded. */
-function gitArgs(): readonly string[] {
-  const calls = standIns.calls().filter((call) => call.name === 'git');
-  expect(calls).toHaveLength(1);
-  return calls[0]?.args ?? [];
+/** The arguments of each git start the case recorded. */
+function gitArgs(): (readonly string[])[] {
+  return standIns
+    .calls()
+    .filter((call) => call.name === 'git')
+    .map((call) => call.args);
 }
 
-test.each([...BUN_ENV_NAMES])('git is asked whether %p is tracked when it sits at the root', (name: string) => {
-  writeFileSync(join(cwd, name), '');
-  standIns.answer('git', { stdout: '' });
+test.each([...BUN_ENV_NAMES])('a tracked %p is a finding that names it', async (name: string) => {
+  standIns.answer('git', { stdout: `${name}\0` });
 
-  trackedFindings();
-
-  expect(gitArgs()).toContain(`:(literal)${name}`);
-});
-
-test('an env file in another case is asked for as it is spelled on disk', () => {
-  writeFileSync(join(cwd, '.Env.Production.Local'), '');
-  standIns.answer('git', { stdout: '' });
-
-  trackedFindings();
-
-  expect(gitArgs()).toContain(':(literal).Env.Production.Local');
-});
-
-test('git lists the index under node_modules in any case, NUL-separated, and asks for no other file', () => {
-  for (const name of ['.env.example', '.env.local.template', 'README.md']) {
-    writeFileSync(join(cwd, name), '');
-  }
-  standIns.answer('git', { stdout: '' });
-
-  trackedFindings();
-
-  const args = gitArgs();
-  expect(args.slice(0, args.indexOf('--') + 1)).toEqual(['ls-files', '-z', '--']);
-  expect(args.slice(args.indexOf('--') + 1)).toEqual([':(icase)node_modules']);
-});
-
-test('a tracked env file is a finding that names it', () => {
-  writeFileSync(join(cwd, '.env'), '');
-  standIns.answer('git', { stdout: '.env\0' });
-
-  expect(trackedFindings()).toEqual([expect.stringContaining('".env" is tracked, and Bun loads it') as string]);
-});
-
-test('one tracked path under node_modules is a finding that names it', () => {
-  standIns.answer('git', { stdout: 'node_modules/.bin/bun\0' });
-
-  expect(trackedFindings()).toEqual([
-    expect.stringContaining('"node_modules/.bin/bun" is tracked under node_modules') as string,
+  expect(await trackedFindings()).toEqual([
+    expect.stringContaining(`${JSON.stringify(name)} is an env file Bun loads`) as string,
   ]);
 });
 
-test('many tracked paths under node_modules, in any case, are one finding naming five and counting the rest', () => {
+test('a tracked env file in another case is a finding that names it as spelled', async () => {
+  standIns.answer('git', { stdout: '.Env.Production.Local\0' });
+
+  expect(await trackedFindings()).toEqual([
+    expect.stringContaining('".Env.Production.Local" is an env file Bun loads') as string,
+  ]);
+});
+
+test('git lists the tracked files, then the untracked ones outside node_modules and the worktrees, NUL-separated', async () => {
+  standIns.answer('git', { stdout: '' });
+
+  await trackedFindings();
+
+  expect(gitArgs()).toEqual([
+    ['ls-files', '-z'],
+    ['ls-files', '-z', '--others', '--exclude=node_modules', '--exclude=/.claude/worktrees/'],
+  ]);
+});
+
+test('one tracked path under node_modules is a finding that names it', async () => {
+  standIns.answer('git', { stdout: 'node_modules/.bin/bun\0' });
+
+  expect(await trackedFindings()).toEqual([
+    expect.stringContaining('"node_modules/.bin/bun" is tracked as or under a node_modules directory') as string,
+  ]);
+});
+
+test('many tracked paths under node_modules, in any case, are one finding naming five and counting the rest', async () => {
   const paths = [
     'Node_Modules/zod/index.js',
     ...[1, 2, 3, 4, 5, 6].map((index) => `node_modules/p${String(index)}.js`),
   ];
   standIns.answer('git', { stdout: paths.map((path) => `${path}\0`).join('') });
 
-  const found = trackedFindings();
+  const found = await trackedFindings();
 
   expect(found).toHaveLength(1);
   const shown = paths.slice(0, 5).map((path) => JSON.stringify(path));
-  expect(found[0]).toStartWith(`${shown.join(', ')} and 2 more are tracked under node_modules`);
+  expect(found[0]).toStartWith(`${shown.join(', ')} and 2 more are tracked as or under a node_modules directory`);
 });
 
-test('an index holding neither yields no finding', () => {
+test('an index holding neither yields no finding', async () => {
   writeFileSync(join(cwd, '.env'), '');
   standIns.answer('git', { stdout: '' });
 
-  expect(trackedFindings()).toEqual([]);
+  expect(await trackedFindings()).toEqual([]);
 });
 
-test('a failed git read is a finding', () => {
+test('a failed git read is a finding for each listing', async () => {
   standIns.answer('git', { stdout: '', exitCode: 128 });
 
-  expect(trackedFindings()).toEqual([
-    expect.stringContaining('git could not list the tracked env files and node_modules paths: it exited 128') as string,
+  expect(await trackedFindings()).toEqual([
+    expect.stringContaining('git could not list the tracked files the gate refuses: it exited 128') as string,
+    expect.stringContaining('git could not list the untracked files the gate refuses: it exited 128') as string,
   ]);
 });
 
-test('a missing git is a finding', () => {
+test('a missing git is a finding for each listing', async () => {
   process.env['PATH'] = besideDir('-empty');
 
-  expect(trackedFindings()).toEqual([
-    expect.stringContaining('git could not list the tracked env files and node_modules paths: it exited 127') as string,
+  expect(await trackedFindings()).toEqual([
+    expect.stringContaining('git could not list the tracked files the gate refuses: it exited 127') as string,
+    expect.stringContaining('git could not list the untracked files the gate refuses: it exited 127') as string,
   ]);
 });
 
-test("git starts with its two config switches and nothing from the gate's environment", () => {
+test("git starts with its two config switches and nothing from the gate's environment", async () => {
   standIns.answer('git', { stdout: '' });
   process.env['GIT_DIR'] = join(cwd, 'elsewhere');
   process.env['git_index_file'] = join(cwd, 'index');
   process.env['GIT_CONFIG_PARAMETERS'] = "'core.fsmonitor=x'";
   process.env['GATE_DECOY'] = 'decoy';
 
-  trackedFindings();
+  await trackedFindings();
 
   const env = standIns.calls()[0]?.env ?? {};
   expect(env['GIT_CONFIG_NOSYSTEM']).toBe('1');
