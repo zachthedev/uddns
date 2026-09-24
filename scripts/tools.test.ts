@@ -14,17 +14,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isolate, spellings, StandIns, WINDOWS } from './stand-ins';
-import {
-  install,
-  LOCK,
-  lockfileFindings,
-  miseEnvironment,
-  PINS,
-  resolve,
-  type Tool,
-  TOOLS,
-  URL_REPLACEMENTS,
-} from './tools';
+import { LOCK, PINS, startupFindings } from './startup';
+import { install, lockfileFindings, miseEnvironment, resolve, type Tool, TOOLS, URL_REPLACEMENTS } from './tools';
 
 // Every stand-in start is a Bun process, and a loaded machine starts one in
 // seconds, so a case gets longer than the runner's five-second default.
@@ -308,11 +299,26 @@ const REFUSED_PROGRAM: readonly string[] = [
   'mise.toml.bak',
 ];
 
+/**
+ * The preflight's findings for the working directory that name a root file
+ * as a program. scripts/ is planted, since the preflight walks it.
+ */
+async function programFindings(): Promise<string[]> {
+  plantEntry('scripts/');
+  try {
+    return (await startupFindings()).filter((finding) => finding.includes('is named like a program'));
+  } catch (error: unknown) {
+    return [`threw: ${String(error)}`];
+  }
+}
+
 test.each([...REFUSED_PROGRAM])('%p is refused as a program name', async (entry: string) => {
   writeFiles();
   plantEntry(entry);
 
-  expect(await findings()).toEqual([carrying(`${quoted(entry)} is named like a program the gate starts`), CLOSING]);
+  expect(await programFindings()).toEqual([
+    carrying(`${quoted(entry)} is named like a program the gate, its hooks or an install start`),
+  ]);
 });
 
 const ALLOWED: readonly string[] = [
@@ -333,6 +339,7 @@ test.each([...ALLOWED])('%p is allowed', async (entry: string) => {
   plantEntry(entry);
 
   expect(await findings()).toEqual([]);
+  expect(await programFindings()).toEqual([]);
 });
 
 test.each([PINS, LOCK])('the pinned file %p is allowed spelled in upper case', async (name: string) => {
@@ -358,6 +365,7 @@ test("every entry at this repository's root, mirrored empty, yields no finding",
   }
 
   expect(await findings()).toEqual([]);
+  expect(await programFindings()).toEqual([]);
 });
 
 test('a .config that is a file rather than a directory yields no finding', async () => {
@@ -912,23 +920,26 @@ test('the mise environment carries the temporary directory and the proxy the gat
   expect(env['HTTPS_PROXY']).toBe('http://127.0.0.1:9');
 });
 
-test('install starts mise install --locked in the mise environment and nothing else', () => {
+test('install starts mise install --locked in the mise environment and nothing else', async () => {
   writeFiles();
 
-  install();
+  await install();
 
   const calls = standIns.calls();
   expect(calls.map((call) => [call.name, ...call.args])).toEqual([['mise', 'install', '--locked']]);
   expectMiseEnvironment(calls[0]?.env ?? {});
 });
 
-test('a failed install throws with what mise printed', () => {
+test('a failed install throws with what mise printed', async () => {
   writeFiles();
   standIns.answer('mise', { stdout: 'no such version', exitCode: 1 });
 
-  expect(() => {
-    install();
-  }).toThrow(/mise install --locked exited 1 saying: no such version/);
+  const outcome = await install().then(
+    () => 'installed',
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  );
+
+  expect(outcome).toMatch(/mise install --locked exited 1 saying: no such version/);
 });
 
 /** Answers `mise which <binary>` with each tool's stand-in, which prints its version as `reported` gives it. */

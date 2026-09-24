@@ -1,9 +1,17 @@
 {
-  "extends": "../tsconfig.json",
   "compilerOptions": {
-    /* Tooling scripts run under bun; the bun type package brings Bun globals and node builtins. */
-    "types": ["bun"]
+    "target": "es2025",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "skipLibCheck": true
   },
-  "include": ["./**/*.ts", "../eslint.config.ts", "../vitest.config.mts"],
-  "exclude": ["node_modules"]
+  "include": ["*.ts"]
 }

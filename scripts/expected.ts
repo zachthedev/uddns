@@ -1,4 +1,88 @@
-import eslint from '@eslint/js';
+/**
+ * What the gate expects of the files each repository writes for itself: its
+ * TypeScript project configs, the zizmor config, the patterns its
+ * `.prettierignore` adds to the shared ones, and `eslint.config.ts`.
+ *
+ * @remarks
+ * scripts/run.ts, scripts/tools.ts and scripts/startup.ts are the same in
+ * every repository of the set, and startup.ts reads this module for the rest.
+ * A change to one of these files changes the matching value here in the same
+ * commit, which a reviewer reads as a gate change. The preflight loads this
+ * module before any check, so it imports nothing.
+ */
+
+/**
+ * Every `tsconfig.json` and `jsconfig.json` the repository keeps beside
+ * scripts/tsconfig.json, by path, with what each holds, compared as parsed
+ * JSON. Their files, strictness and `noCheck` decide what the typecheck and
+ * lint rows check, so any other project config in the tree is refused. None
+ * carries `paths` or `baseUrl`, which startup.ts refuses along any `extends`
+ * chain.
+ */
+export const EXPECTED_PROJECT_CONFIGS: Readonly<Record<string, unknown>> = {
+  'tsconfig.json': {
+    compilerOptions: {
+      target: 'es2024',
+      lib: ['es2024'],
+      module: 'es2022',
+      moduleResolution: 'bundler',
+      noEmit: true,
+      isolatedModules: true,
+
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noImplicitReturns: true,
+      noFallthroughCasesInSwitch: true,
+      noUncheckedIndexedAccess: true,
+      noImplicitOverride: true,
+      noPropertyAccessFromIndexSignature: true,
+
+      skipLibCheck: true,
+    },
+    include: ['worker-configuration.d.ts', 'src/**/*.ts'],
+    exclude: ['node_modules', 'dist', '.wrangler'],
+  },
+  'tests/tsconfig.json': {
+    extends: '../tsconfig.json',
+    compilerOptions: {
+      allowJs: true,
+      types: ['@cloudflare/vitest-plugin/types', 'node'],
+    },
+    include: [
+      './**/*.ts',
+      '../src/**/*.ts',
+      '../worker-configuration.d.ts',
+      '../eslint.config.ts',
+      '../vitest.config.mts',
+    ],
+    exclude: ['node_modules'],
+  },
+};
+
+/**
+ * What `.github/zizmor.yml` holds, compared as parsed YAML. Each waiver is
+ * one entry scoped to the file, line and column of the finding it waives.
+ */
+export const EXPECTED_ZIZMOR_CONFIG = {
+  rules: {
+    'unpinned-uses': { config: { policies: { '*': 'hash-pin' } } },
+    'secrets-inherit': { ignore: ['cd.yml:32:11', 'deps.yml:30:11'] },
+  },
+} as const;
+
+/**
+ * The patterns `.prettierignore` holds beside the shared ones startup.ts
+ * lists, each once: the types file `wrangler types` writes, and the state
+ * directory wrangler fills locally, which `bun run format` would walk into.
+ */
+export const OWN_PRETTIERIGNORE_PATTERNS: readonly string[] = ['/worker-configuration.d.ts', '/.wrangler/'];
+
+/**
+ * What `eslint.config.ts` holds, byte for byte. ESLint runs the file as a
+ * module, and its ignores and rules decide what the lint row checks.
+ */
+export const EXPECTED_ESLINT_CONFIG = `import eslint from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import prettierConfig from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
@@ -131,3 +215,4 @@ export default defineConfig(
   // Must stay last: disables rules that conflict with prettier formatting
   prettierConfig,
 );
+`;

@@ -13,20 +13,17 @@
  * here, in source, and the lockfile is held to them byte for byte. No url
  * parser reads either address, so no parser can read one differently from
  * mise.
+ *
+ * This file imports zod from node_modules, so the gate loads it only once
+ * the checks before its rows pass.
  */
 
 import { dlopen, FFIType, type Pointer, ptr, toArrayBuffer } from 'bun:ffi';
-import type { Dirent } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { describe, isProgramName, run } from './run';
-
-/** The file pinning a version for every tool mise installs. */
-export const PINS = 'mise.toml';
-
-/** The file holding a checksum, a url and a backend per platform for every pinned tool. */
-export const LOCK = 'mise.lock';
+import { describe, type Finished, fold, PROXY_NAMES, quote, run } from './run';
+import { directoryEntries, isTable, LOCK, PINS, quoteValue, sameValue } from './startup';
 
 /** The command that rewrites {@link LOCK} after an edit to {@link PINS}. */
 const RELOCK = 'mise lock';
@@ -82,9 +79,6 @@ const EXPECTED_SETTINGS = {
   aqua: { github_attestations: true },
 } as const;
 
-/** The root files a repository carries under a program's name: the lockfile Bun writes and the two mise files. */
-const ROOT_FILES: readonly string[] = ['bun.lock', PINS, LOCK];
-
 /** The tables {@link PINS} may hold. mise runs `[hooks]`, `[env]` and `[vars]` on install, so none of them is one. */
 const PIN_SECTIONS: readonly string[] = ['tools', 'tool_config', 'settings'];
 
@@ -114,8 +108,8 @@ const TOOL_OPTION_KEYS: readonly string[] = ['version', 'version_prefix'];
  * own value wherever the machine sets it.
  */
 const MISE_INHERITED: Readonly<Record<'posix' | 'windows', readonly string[]>> = {
-  posix: ['HOME', 'TMPDIR', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy'],
-  windows: ['TEMP', 'TMP', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy'],
+  posix: ['HOME', 'TMPDIR', ...PROXY_NAMES],
+  windows: ['TEMP', 'TMP', ...PROXY_NAMES],
 };
 
 /** A Windows known folder's id, laid out as the GUID structure the Shell reads. */
@@ -331,87 +325,30 @@ const PlatformSchema = z.object({
   provenance: z.string().optional(),
 });
 
-/** Whether `value`, parsed from TOML, is a table. */
-function isTable(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Whether two values parsed from TOML are the same: equal primitives, equal arrays item by item, tables with the same keys and equal values. */
-function sameValue(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => sameValue(item, b[i]));
-  }
-  if (isTable(a) || isTable(b)) {
-    if (!isTable(a) || !isTable(b)) {
-      return false;
-    }
-    const keys = Object.keys(a);
-    return (
-      keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && sameValue(a[key], b[key]))
-    );
-  }
-  return a === b;
-}
-
-/** Characters that change how a line reads without printing: bidi controls, zero-width marks, line and paragraph separators, and interlinear annotation marks. */
-const INVISIBLE = /[\u061C\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\uFFF9-\uFFFB]/g;
-
-/**
- * `value`, read from {@link PINS} or {@link LOCK}, for a finding: JSON-encoded,
- * so a control character prints as an escape, with every {@link INVISIBLE}
- * character escaped too, and cut short.
- */
-function quote(value: string): string {
-  return JSON.stringify(value.slice(0, 200)).replace(
-    INVISIBLE,
-    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  );
-}
-
-/** Any value read from {@link PINS} or {@link LOCK}, for a finding, through {@link quote}. */
-function quoteValue(value: unknown): string {
-  if (value === undefined) {
-    return 'nothing';
-  }
-  return quote(typeof value === 'string' ? value : JSON.stringify(value));
-}
-
 /**
  * Whether mise reads `name`, an entry in the repository root, as a config
  * file, a config directory or a lockfile, other than {@link PINS} and
  * {@link LOCK}.
  *
  * @remarks
- * The names are mise's own discovery list, compared without regard to case
- * because Windows and macOS open a file that way: `.tool-versions`,
+ * The names are mise's own discovery list, compared through {@link fold}
+ * because Windows and macOS open a file under another spelling: `.tool-versions`,
  * `.miserc.toml`, the `mise` and `.mise` directories, and every
  * `[.]mise[.<name>].toml` or `.lock` beside the two pinned files, which
  * covers the local and the per-environment files.
  */
 function isOtherMiseFile(name: string): boolean {
-  const lower = name.toLowerCase();
-  if (lower === PINS || lower === LOCK) {
+  const folded = fold(name);
+  if (folded === PINS || folded === LOCK) {
     return false;
   }
   return (
-    lower === '.tool-versions' ||
-    lower === '.miserc.toml' ||
-    lower === 'mise' ||
-    lower === '.mise' ||
-    /^\.?mise(\..+)?\.(toml|lock)$/.test(lower)
+    folded === '.tool-versions' ||
+    folded === '.miserc.toml' ||
+    folded === 'mise' ||
+    folded === '.mise' ||
+    /^\.?mise(\..+)?\.(toml|lock)$/.test(folded)
   );
-}
-
-/** The entries of `path`, or none when it is a file rather than a directory. */
-async function directoryEntries(path: string): Promise<Dirent[]> {
-  try {
-    return await readdir(path, { withFileTypes: true });
-  } catch (error: unknown) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOTDIR') {
-      return [];
-    }
-    throw error;
-  }
 }
 
 /** Every symbolic link or junction under `path`, which is a directory the walk entered, as paths from the root. */
@@ -431,8 +368,8 @@ async function linksUnder(path: string): Promise<string[]> {
 /**
  * Every file in the repository root the gate refuses to run beside, as
  * findings: a mise config or lock file other than {@link PINS} and
- * {@link LOCK}, a file named like a program the gate starts, and a symbolic
- * link or junction at the root or under the directories mise reads.
+ * {@link LOCK}, and a symbolic link or junction at the root or under the
+ * directories mise reads.
  *
  * @remarks
  * mise merges every config file it discovers, and each one's sibling
@@ -443,31 +380,25 @@ async function linksUnder(path: string): Promise<string[]> {
  * directory are every place a file in the tree can reach it. mise follows a
  * link to whatever it names, where a name scan never looks, so the root and
  * the `.config`, `.mise` and `mise` directories hold none.
- *
- * A program runs from an absolute PATH entry alone, whatever the root holds.
- * The tools row runs this before its install, so a planted program name is a
- * red row on every platform too.
  */
 async function rootFindings(): Promise<string[]> {
   const found: string[] = [];
   for (const entry of await readdir('.', { withFileTypes: true })) {
     const name = entry.name;
-    const lower = name.toLowerCase();
+    const folded = fold(name);
     if (entry.isSymbolicLink()) {
       found.push(`${quote(name)} is a link, and mise follows a link where a name scan never looks`);
-    } else if (lower === '.config' || lower === '.mise' || lower === 'mise') {
+    } else if (folded === '.config' || folded === '.mise' || folded === 'mise') {
       for (const link of await linksUnder(name)) {
         found.push(`${quote(link)} is a link, and mise follows a link where a name scan never looks`);
       }
     }
     if (isOtherMiseFile(name)) {
       found.push(`mise reads ${quote(name)} beside ${PINS} and ${LOCK}, and the gate installs from those two alone`);
-    } else if (!entry.isDirectory() && !ROOT_FILES.includes(lower) && isProgramName(name)) {
-      found.push(`${quote(name)} is named like a program the gate starts, and a clone carries no program at its root`);
     }
-    if (lower === '.config') {
+    if (folded === '.config') {
       for (const inner of await directoryEntries(name)) {
-        if (inner.name.toLowerCase().startsWith('mise')) {
+        if (fold(inner.name).startsWith('mise')) {
           found.push(
             `mise reads ${quote(`${name}/${inner.name}`)} beside ${PINS} and ${LOCK}, and the gate installs from those two alone`,
           );
@@ -591,6 +522,8 @@ function findingsForPlatform(tool: Tool, version: string, platform: string, asse
   }
   return found;
 }
+
+/* ///// mise.toml and mise.lock ///// */
 
 /**
  * The version {@link PINS} pins for every tool, and the findings against the
@@ -808,19 +741,40 @@ export async function lockfileFindings(): Promise<string[]> {
 /* ///// The install and the binaries ///// */
 
 /**
+ * Runs one mise command, after {@link lockfileFindings} comes back empty, in
+ * {@link miseEnvironment} and nothing else.
+ *
+ * @remarks
+ * This is the one place the gate starts mise. mise evaluates a config's
+ * `[env]` and `[vars]` templates whenever it loads the file, `mise which`
+ * included, so every command asserts the two files first, and a single row
+ * run that skips the tools row never reaches mise over an unchecked file.
+ *
+ * @throws When {@link lockfileFindings} reports anything, with the findings
+ */
+async function mise(args: readonly string[], timeoutMs: number): Promise<Finished> {
+  const found = await lockfileFindings();
+  if (found.length > 0) {
+    throw new Error(found.join('\n'));
+  }
+  return run(['mise', ...args], timeoutMs, miseEnvironment(), { inherit: false });
+}
+
+/**
  * Installs every pinned tool from the lockfile, which is a no-op once they are
  * present.
  *
  * @remarks
- * This runs only after {@link lockfileFindings} came back empty, held by the
- * row that calls it first. `--locked` refuses an entry with no url for this
- * platform rather than resolving one. It runs in {@link miseEnvironment} and
- * nothing else. The install is handed no token: a locked install makes no
+ * `--locked` refuses an entry with no url for this platform rather than
+ * resolving one. The install is handed no token: a locked install of a tool
+ * mise's registry routes, as every tool in {@link TOOLS} is, makes no
  * api.github.com request and reads attestation bundles from
- * mise-versions.jdx.dev.
+ * mise-versions.jdx.dev. A `github:` tool reads its attestation from the API.
+ *
+ * @throws When the files fail their assertions or the install fails
  */
-export function install(): void {
-  const finished = run(['mise', 'install', '--locked'], INSTALL_TIMEOUT_MS, miseEnvironment(), { inherit: false });
+export async function install(): Promise<void> {
+  const finished = await mise(['install', '--locked'], INSTALL_TIMEOUT_MS);
   if (finished.exitCode !== 0) {
     throw new Error(`mise install --locked ${describe(finished)}`);
   }
@@ -831,7 +785,8 @@ export function install(): void {
  * against the pinned version.
  *
  * @returns The binary path per {@link PINS} key
- * @throws When a binary is missing or reports a version other than the pin
+ * @throws When the files fail their assertions, or a binary is missing or
+ * reports a version other than the pin
  */
 export async function resolve(): Promise<ReadonlyMap<string, string>> {
   const pins = pinsFindings(Bun.TOML.parse(await Bun.file(PINS).text()));
@@ -841,12 +796,12 @@ export async function resolve(): Promise<ReadonlyMap<string, string>> {
     if (version === undefined) {
       throw new Error(`${PINS} pins no version of ${tool.key}`);
     }
-    const located = run(['mise', 'which', tool.binary], READ_TIMEOUT_MS, miseEnvironment(), { inherit: false });
+    const located = await mise(['which', tool.binary], READ_TIMEOUT_MS);
     const path = located.stdout.trim();
     if (located.exitCode !== 0 || path.length === 0) {
       throw new Error(`mise which ${tool.binary} found nothing. Install it with: mise install`);
     }
-    const printed = run([path, tool.versionFlag], READ_TIMEOUT_MS);
+    const printed = await run([path, tool.versionFlag], READ_TIMEOUT_MS);
     const reported = /\d+\.\d+\.\d+/.exec(`${printed.stdout}\n${printed.stderr}`)?.[0] ?? '';
     if (printed.exitCode !== 0 || reported !== version) {
       throw new Error(

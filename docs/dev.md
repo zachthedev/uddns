@@ -13,11 +13,19 @@ carries the conventions; this file carries the machine.
   untracked one: mise reads every config and lockfile it finds, `mise.local.toml`, `.mise.toml`,
   `.tool-versions` and `.config/mise/` among them, so the gate's `tools` row refuses any mise file but
   those two.
+- [git](https://git-scm.com). The gate's first check lists the tracked and untracked files through
+  `git ls-files`, before any row, and the `cf-typegen:check` row diffs the types file against the index.
 - [GitHub CLI](https://cli.github.com), optional. When `gh auth token` answers, `bun run check` runs
   zizmor online and hands that answer to zizmor alone, so its advisory, impostor-commit and
   version-comment audits can read GitHub.
 
 Every other tool, wrangler included, arrives through `bun install` at the version `package.json` pins.
+These four are every program the gate starts from `PATH`: Bun runs the gate, and the gate starts git, mise
+and gh by name. When a process is still running at its deadline, the gate also starts the system's own
+`taskkill` on Windows, or `ps` elsewhere, to end it and every process it started. A process that already
+exited is never killed by its pid. When one it started still holds its output, the row fails and that
+process runs on, since only a Windows job object reaches a process whose parent is gone, and Bun offers
+none. End it yourself.
 
 ## First run
 
@@ -53,14 +61,14 @@ domain and access key. [docs/deploy.md](deploy.md) says what a deploy does.
 
 - `worker-configuration.d.ts`, by `bun run cf-typegen`. The command passes `--env-file .dev.vars.template`,
   so the committed file carries the template's secret names rather than whichever ones a contributor keeps
-  in `.dev.vars`. The gate's `cf-typegen:check` row deletes the file, regenerates the whole of it, and runs
-  `git diff --exit-code` against it, so it compares bytes against the index rather than trusting the file's
-  own header. wrangler carries the runtime half forward from an existing file whenever its
+  in `.dev.vars`. The gate's `cf-typegen:check` row refuses the file when git does not track it, deletes
+  it, regenerates the whole of it, and runs `git diff --exit-code` against it, so it compares bytes against
+  the index rather than trusting the file's own header. wrangler carries the runtime half forward from an existing file whenever its
   `// Runtime types generated with workerd@` line matches, which is why the row deletes first, and
   wrangler's own `--check` flag reads only the header lines, which is why it is not used. The diff passes
   `--no-ext-diff`, so a `diff.external` seeded through the environment cannot answer for it. A red row means
-  the committed file is stale: stage the regenerated one and run again. If wrangler itself fails, the
-  file is absent until `git checkout -- worker-configuration.d.ts` restores it.
+  the committed file is stale: stage the regenerated one and run again. If wrangler itself fails, the row
+  restores the tracked file with `git checkout -- worker-configuration.d.ts` before it goes red.
 - `mise.lock`, by `mise lock` after any edit to `[tools]` in `mise.toml`. A release with no asset digest
   gets its checksums computed once from the artifacts at the recorded urls; a relock keeps them, and
   `mise.toml` says which tool and how, beside its pin. The gate holds each recorded url to the asset name

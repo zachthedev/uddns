@@ -6,3 +6,11 @@ rules:
     config:
       policies:
         '*': hash-pin
+  # cd.yml's release-pr job and deps.yml's deps job hand their called workflow every secret. Each
+  # called job names an environment, and a caller that runs in none cannot pass that environment's
+  # secret by name. The comment above each job says so. Each entry is the file, line and column of
+  # the job's uses value, so a call that moves loses its waiver and the audit reports it again.
+  secrets-inherit:
+    ignore:
+      - cd.yml:32:11
+      - deps.yml:30:11

@@ -1,44 +1,51 @@
-# Git hooks, installed by `lefthook install` (runs automatically via the
-# package.json prepare script on bun install).
+# Git hooks, installed by `lefthook install`, which the package.json prepare
+# script runs on every `bun install`.
 #
-# Every job resolves its tool with `bunx --no-install`, which stops at the
-# installed package and exits 1 with none rather than fetching one, so the
-# version that runs is the one package.json pins. git resolves hooks through
-# the common directory, so these run in linked worktrees where a package may
-# not be installed at all.
+# Every job resolves its tool with `bunx --bun --no-install`, which fetches
+# nothing at commit time. When the checkout's package is installed, it always
+# runs, at the version bun.lock pins. When it is missing, bunx runs a tool of
+# the same name from PATH, from a parent directory's node_modules/.bin or from
+# its own cache under the temporary directory, and exits 1 only when none
+# exists. CI's gate job, which installs from the lockfile, is the control for
+# that case. --bun runs the tool under Bun. Without it, bunx runs a bin whose
+# first line names node under the `node` on PATH.
+# When node_modules is gone, lefthook itself is missing and the commit goes
+# through. CONTRIBUTING.md#setup says what holds that case.
 
 pre-commit:
   jobs:
     # Order matters: lint fixes land before formatting, and both re-stage
-    # their changes via stage_fixed.
+    # their changes. Each job sees the staged files its glob matches alone, so
+    # a commit that touches none of them skips it.
     - name: eslint
       glob: '*.{ts,mts,js}'
-      # --no-warn-ignored: staged files passed explicitly may be in the
-      # eslint ignore list (generated worker-configuration.d.ts)
-      run: bunx --no-install eslint --fix --max-warnings=0 --no-warn-ignored {staged_files}
+      # --config names the one config, so no eslint.config.* nearer a staged file
+      # runs. --no-warn-ignored: a staged file the config's ignores name, such as
+      # a generated one, passes rather than warning past --max-warnings=0.
+      run: bunx --bun --no-install eslint --config eslint.config.ts --fix --max-warnings=0 --no-warn-ignored {staged_files}
       stage_fixed: true
+    # --config names the one config, so no other Prettier config file loads,
+    # and --no-editorconfig keeps any .editorconfig from setting an option.
+    # --ignore-path names .prettierignore alone, so .gitignore never skips a
+    # staged file.
     - name: prettier
-      glob: '*.{ts,mts,js,json,jsonc,md,yml,yaml}'
-      run: bunx --no-install prettier --write {staged_files}
+      run: bunx --bun --no-install prettier --config .prettierrc --no-editorconfig --ignore-path .prettierignore --write --ignore-unknown {staged_files}
       stage_fixed: true
 
 commit-msg:
   jobs:
     # {1} is the message file git hands the hook. The type list comes from the
     # Conventional Commits specification and the scopes from
-    # .github/commit-scopes.json, both by way of commitlint.config.js.
+    # .github/commit-scopes.json, both by way of commitlint.config.js, which
+    # --config names, so commitlint searches for no other config.
     - name: commitlint
-      run: bunx --no-install commitlint --edit {1}
+      run: bunx --bun --no-install commitlint --config commitlint.config.js --edit {1}
 
 pre-push:
   jobs:
-    # The gate without its test row, so the hook passes on a maintainer's
-    # machine whatever its temp path is; a hook that cannot pass gets bypassed,
-    # and a bypassed hook guards nothing. CI's gate job runs the whole gate,
-    # tests included, on three platforms. The rows live in scripts/check.ts
-    # alone. The hook runs over the working tree, so uncommitted edits count
-    # toward the result. It runs by its file, not through bun run, so no
-    # node_modules/.bin sits ahead of PATH before the gate refuses a tracked
-    # node_modules path.
+    # The gate without its slow rows, which CI runs whole on three platforms.
+    # It runs over the working tree, so uncommitted edits count toward the
+    # result. It runs by its file, not through bun run, so no node_modules/.bin
+    # sits ahead of PATH before the gate refuses a tracked node_modules path.
     - name: check
       run: bun scripts/check.ts --quick

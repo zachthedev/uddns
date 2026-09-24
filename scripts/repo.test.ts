@@ -4,6 +4,7 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PROJECTS } from './check';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -100,4 +101,18 @@ test('the package scripts a contributor runs start the gate file', () => {
     'bun scripts/check.ts --quick',
     'bun scripts/check.ts --rows',
   ]);
+});
+
+// A project the typecheck script names and the gate does not is checked by
+// hand and skipped in CI, so the two lists are one list.
+test("the typecheck script checks the gate's projects, in the gate's order", () => {
+  const manifest = table(JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')), 'package.json');
+  const script = table(manifest['scripts'], 'package.json scripts')['typecheck'];
+  if (typeof script !== 'string') {
+    throw new Error('fixture: package.json has no typecheck script');
+  }
+
+  const named = [...script.matchAll(/(?:^|\s)(?:-p|--project)\s+(\S+)/g)].map((match) => match[1]);
+
+  expect(named).toEqual([...PROJECTS]);
 });

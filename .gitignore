@@ -6,6 +6,11 @@
 .claude/worktrees/
 .claude/settings.local.json
 
+# lefthook's personal configs, which it merges over lefthook.yml on one machine alone. The gate
+# refuses a tracked one.
+/lefthook-local*
+/.lefthook-local*
+
 # Changed from the template: `!.env.local.template` added beside `!.env.example`.
 # Below: github/gitignore/Node.gitignore at f5de2c2bb2c117f9ae643d6baa7acc23c580b7aa.
 # Logs

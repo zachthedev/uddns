@@ -4,6 +4,12 @@
     "allowJs": true,
     "types": ["@cloudflare/vitest-plugin/types", "node"]
   },
-  "include": ["./**/*.ts", "../src/**/*.ts", "../worker-configuration.d.ts"],
+  "include": [
+    "./**/*.ts",
+    "../src/**/*.ts",
+    "../worker-configuration.d.ts",
+    "../eslint.config.ts",
+    "../vitest.config.mts"
+  ],
   "exclude": ["node_modules"]
 }
