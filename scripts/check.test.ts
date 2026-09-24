@@ -36,12 +36,11 @@ let answer: (cmd: readonly string[]) => Answer = () => ({});
 
 function recorder(
   cmd: readonly string[],
-  _timeoutMs: number,
   env: Readonly<Record<string, string | undefined>> = {},
   options: RunOptions = {},
 ): Promise<Finished> {
   calls.push({ cmd: [...cmd], env: { ...env }, options: { ...options }, typesPresent: existsSync(TYPES) });
-  return Promise.resolve({ exitCode: 0, stdout: '', stderr: '', timedOut: false, heldOpen: false, ...answer(cmd) });
+  return Promise.resolve({ exitCode: 0, stdout: '', stderr: '', heldOpen: false, ...answer(cmd) });
 }
 
 // Copied before the mocks replace them in place, so afterAll can put them
@@ -52,9 +51,12 @@ const REAL_TOOLS = { ...toolsModule };
 let standIns: StandIns;
 let installs = 0;
 
+/** True while a case wants the tools row to resolve ShellCheck under a directory named with a single quote. */
+let quotedShellcheck = false;
+
 /** The path the mocked tools row resolves for `key`, which no case starts. */
 function binaryPath(key: string): string {
-  return join(standIns.dir, key);
+  return key === 'shellcheck' && quotedShellcheck ? join(standIns.dir, "it's", key) : join(standIns.dir, key);
 }
 
 await mock.module('./run', () => ({ ...REAL_RUN, run: recorder }));
@@ -130,7 +132,10 @@ const TRACKED: readonly string[] = ['README.md', 'src/a.ts', 'config.toml', '.gi
 /** The tracked workflows, which the actionlint and zizmor rows read. */
 const WORKFLOWS: readonly string[] = ['.github/workflows/ci.yml'];
 
-/** Writes every {@link TRACKED} file into the working directory. */
+/**
+ * Writes every {@link TRACKED} file into the working directory, and the zizmor
+ * config whose secrets-inherit waiver names each file {@link INHERITED} reports.
+ */
 function plantTree(): void {
   for (const path of TRACKED) {
     // Bun's mkdirSync refuses '.' even with recursive set.
@@ -139,16 +144,34 @@ function plantTree(): void {
     }
     writeFileSync(path, path.endsWith('.md') ? '# Title\n' : 'x\n');
   }
+  writeFileSync('.github/zizmor.yml', 'rules:\n  secrets-inherit:\n    ignore:\n      - cd.yml\n      - deps.yml\n');
 }
 
-/** The package entry `cmd` starts, relative to the node_modules check.ts loaded beside, or undefined. */
+/**
+ * The package entry `cmd` starts after the gate Bun and `--no-env-file`,
+ * relative to the node_modules check.ts loaded beside, or undefined.
+ */
 function entry(cmd: readonly string[]): string | undefined {
   const prefix = join(ROOT, 'node_modules');
-  const second = cmd[1] ?? '';
-  return cmd[0] === process.execPath && second.startsWith(prefix)
-    ? second.slice(prefix.length + 1).replaceAll('\\', '/')
+  const third = cmd[2] ?? '';
+  return cmd[0] === process.execPath && cmd[1] === '--no-env-file' && third.startsWith(prefix)
+    ? third.slice(prefix.length + 1).replaceAll('\\', '/')
     : undefined;
 }
+
+/** zizmor's report of one job passing secrets: inherit in each file the held zizmor.yml waives. */
+const INHERITED = ['cd.yml', 'deps.yml'].map((name) => ({
+  ident: 'secrets-inherit',
+  locations: [
+    {
+      symbolic: { kind: 'Primary', key: { Local: { verbatim_path: `.github/workflows/${name}` } } },
+      concrete: {
+        feature: `zachthedev/.github/.github/workflows/${name}@c53d09e393028ceddee0d761f2a7963394289a72`,
+        location: { start_point: { row: 9 } },
+      },
+    },
+  ],
+}));
 
 /** The files a command hands its tool after `--`. */
 function handed(cmd: readonly string[]): readonly string[] {
@@ -165,11 +188,16 @@ function passing(cmd: readonly string[]): Answer {
   if (program === 'gh') {
     return { exitCode: 1 };
   }
+  if (program === process.execPath && args[1] === 'test') {
+    return { stderr: ' 3 pass\n 0 fail\nRan 3 tests across 1 file.\n' };
+  }
   switch (entry(cmd)) {
     case '@typescript/native/bin/tsc':
       return { stdout: `${resolve('src/a.ts').replaceAll('\\', '/')}\n` };
     case 'eslint/bin/eslint.js':
       return { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [] }]) };
+    case 'vitest/vitest.mjs':
+      return { stdout: ' Test Files  1 passed (1)\n      Tests  3 passed (3)\n' };
     default:
       break;
   }
@@ -181,16 +209,26 @@ function passing(cmd: readonly string[]): Answer {
     };
   }
   if (program === binaryPath('actionlint')) {
-    return args.includes('-verbose')
+    if (args.includes('-verbose')) {
+      return {
+        stderr: handed(cmd)
+          .map((path) => `verbose: Found total 0 errors in 1 ms for ${path}\n`)
+          .join(''),
+      };
+    }
+    // Each canary comes back with the one finding the row requires of it.
+    return (args.at(-1) ?? '').endsWith('directive.yml')
       ? {
-          stderr: handed(cmd)
-            .map((path) => `verbose: Found total 0 errors in 1 ms for ${path}\n`)
-            .join(''),
+          exitCode: 1,
+          stdout:
+            'directive.yml:8:9: shellcheck reported issue in this script: SC0:error:1:1: A ShellCheck directive is refused',
         }
-      : { stdout: 'canary.yml:7:9: shellcheck reported issue in this script: SC2086:info:1:6' };
+      : { exitCode: 1, stdout: 'finding.yml:8:9: shellcheck reported issue in this script: SC2086:info:2:6' };
   }
   if (program === binaryPath('zizmor')) {
-    return { stderr: WORKFLOWS.map((path) => `completed ${path}\n`).join('') };
+    return args.includes('--no-config')
+      ? { exitCode: 13, stdout: JSON.stringify(INHERITED) }
+      : { stderr: WORKFLOWS.map((path) => `completed ${path}\n`).join('') };
   }
   return {};
 }
@@ -277,19 +315,23 @@ const PACKAGE_ROWS: readonly (readonly [string, string])[] = [
   ['test', 'vitest/vitest.mjs'],
 ];
 
-test.each([...PACKAGE_ROWS])('%s starts the gate Bun on the absolute entry %s', async (name: string, path: string) => {
-  plantTree();
-  writeFileSync(TYPES, 'x\n');
+test.each([...PACKAGE_ROWS])(
+  '%s starts the gate Bun with no env file on the absolute entry %s',
+  async (name: string, path: string) => {
+    plantTree();
+    writeFileSync(TYPES, 'x\n');
 
-  await row(name).check(false);
+    await row(name).check(false);
 
-  const started = calls.filter((call) => call.cmd[0] === process.execPath);
-  expect(started.length).toBeGreaterThan(0);
-  for (const call of started) {
-    expect(call.cmd[1]).toBe(join(ROOT, 'node_modules', path));
-    expect(isAbsolute(call.cmd[1] ?? '')).toBe(true);
-  }
-});
+    const started = calls.filter((call) => call.cmd[0] === process.execPath);
+    expect(started.length).toBeGreaterThan(0);
+    for (const call of started) {
+      expect(call.cmd[1]).toBe('--no-env-file');
+      expect(call.cmd[2]).toBe(join(ROOT, 'node_modules', path));
+      expect(isAbsolute(call.cmd[2] ?? '')).toBe(true);
+    }
+  },
+);
 
 test('no row starts a program through bun run, bunx or node, or by a name other than git and gh', async () => {
   await runEveryRow();
@@ -298,16 +340,16 @@ test('no row starts a program through bun run, bunx or node, or by a name other 
     const [program = ''] = call.cmd;
     expect(isAbsolute(program) || program === 'git' || program === 'gh').toBe(true);
     if (program === process.execPath) {
-      expect(call.cmd[1]).not.toBe('run');
+      // Bun's own flag first, then the entry or bun's subcommand.
+      expect(call.cmd.slice(1, 3)).not.toContain('run');
     }
   }
 });
 
-test('scripts:test runs bun test over scripts/ with the gate Bun, its report shown', async () => {
+test('scripts:test runs bun test over scripts/ with the gate Bun and no env file', async () => {
   await row('scripts:test').check(false);
 
-  expect(calls.map((call) => call.cmd)).toEqual([[process.execPath, 'test', './scripts/']]);
-  expect(calls[0]?.options.show).toBe(true);
+  expect(calls.map((call) => call.cmd)).toEqual([[process.execPath, '--no-env-file', 'test', './scripts/']]);
 });
 
 test('typecheck names each project with --project, one tsc pass each, in order', async () => {
@@ -413,12 +455,11 @@ test.each([
   expect(call?.env['NO_PROXY']).toBe(`a.example,${LOOPBACK}`);
 });
 
-test('the test row runs vitest run --coverage with its report shown', async () => {
+test('the test row runs vitest run --coverage', async () => {
   await row('test').check(false);
 
   const [call] = callsToEntry('vitest/vitest.mjs');
-  expect(call?.cmd.slice(2)).toEqual(['run', '--coverage']);
-  expect(call?.options.show).toBe(true);
+  expect(call?.cmd.slice(3, 5)).toEqual(['run', '--coverage']);
 });
 
 test.each([
@@ -469,8 +510,11 @@ test('cf-typegen:check asks git, removes the file, regenerates it, then diffs it
     ['git', 'ls-files', '--error-unmatch', '--', TYPES],
     [
       process.execPath,
+      '--no-env-file',
       join(ROOT, 'node_modules', 'wrangler/bin/wrangler.js'),
       'types',
+      '--config',
+      'wrangler.jsonc',
       '--env-file',
       '.dev.vars.template',
     ],
@@ -494,20 +538,14 @@ test('cf-typegen:check refuses an untracked types file before it removes anythin
   expect(steps()).toEqual(['git ls-files']);
 });
 
-test.each([
-  ['fails', { exitCode: 1, stderr: 'wrangler broke' }, 'wrangler types exited 1 saying: wrangler broke'],
-  ['is killed at its deadline', { exitCode: -1, timedOut: true }, 'wrangler types was killed at its deadline'],
-])(
-  'cf-typegen:check restores the tracked file when wrangler %s, and diffs nothing',
-  async (_label: string, wrangler: Answer, message: string) => {
-    writeFileSync(TYPES, 'x\n');
-    answer = typegen({ wrangler });
+test('cf-typegen:check restores the tracked file when wrangler fails, and diffs nothing', async () => {
+  writeFileSync(TYPES, 'x\n');
+  answer = typegen({ wrangler: { exitCode: 1, stderr: 'wrangler broke' } });
 
-    expect(await outcome(() => check.cfTypegen())).toStartWith(message);
-    expect(steps()).toEqual(['git ls-files', 'wrangler/bin/wrangler.js', 'git checkout']);
-    expect(calls.at(-1)?.cmd).toEqual(['git', 'checkout', '--', TYPES]);
-  },
-);
+  expect(await outcome(() => check.cfTypegen())).toStartWith('wrangler types exited 1 saying: wrangler broke');
+  expect(steps()).toEqual(['git ls-files', 'wrangler/bin/wrangler.js', 'git checkout']);
+  expect(calls.at(-1)?.cmd).toEqual(['git', 'checkout', '--', TYPES]);
+});
 
 test('cf-typegen:check names both failures when the restore fails too', async () => {
   writeFileSync(TYPES, 'x\n');
@@ -522,4 +560,429 @@ test('cf-typegen:check names both failures when the restore fails too', async ()
 test('the tools row installs through the tools module, once per run', () => {
   // beforeAll ran the row once.
   expect(installs).toBe(1);
+});
+
+/* ///// What the rows read from their tools ///// */
+
+/** What running `work` ended with: `line: ` and the row's line, or the message it threw. */
+async function lineOrMessage(work: () => string | undefined | Promise<string | undefined>): Promise<string> {
+  try {
+    return `line: ${String(await work())}`;
+  } catch (error: unknown) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** Whether `cmd` is the gate Bun running bun test, as the scripts:test row starts it. */
+function isBunTest(cmd: readonly string[]): boolean {
+  return cmd[0] === process.execPath && cmd[1] === '--no-env-file' && cmd[2] === 'test';
+}
+
+/** The answer for every call but vitest's, which answers `vitest`. */
+function vitestAnswers(vitest: Answer): (cmd: readonly string[]) => Answer {
+  return (cmd: readonly string[]): Answer => (entry(cmd) === 'vitest/vitest.mjs' ? vitest : passing(cmd));
+}
+
+/* ///// The test row's count ///// */
+
+interface CountCase {
+  readonly label: string;
+  readonly answer: Answer;
+  /** The row's line after `line: `, or the start of the message it throws. */
+  readonly expected: string;
+}
+
+// The row fails when the run checked nothing, whatever vitest's exit code
+// says: no test counted, or every counted test skipped or left to do. vitest
+// reports a name filter as a skip, and the row allows none, so it fails on any
+// skipped or todo test too. Its line names the tests and the files.
+const COUNT_CASES: readonly CountCase[] = [
+  {
+    label: 'every test passed',
+    answer: { stdout: ' Test Files  6 passed (6)\n      Tests  330 passed (330)\n' },
+    expected: 'line: 330 tests across 6 files',
+  },
+  {
+    label: 'some tests skipped',
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  8 passed | 2 skipped (10)\n' },
+    expected: 'vitest skipped or left to do 2 of its 10 tests, past the 0 the row allows',
+  },
+  {
+    label: 'a todo counts as skipped',
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  3 passed | 1 todo (4)\n' },
+    expected: 'vitest skipped or left to do 1 of its 4 tests, past the 0 the row allows',
+  },
+  {
+    label: 'a name filter that leaves one test running',
+    answer: { stdout: ' Test Files  1 passed | 5 skipped (6)\n      Tests  1 passed | 329 skipped (330)\n' },
+    expected: 'vitest skipped or left to do 329 of its 330 tests, past the 0 the row allows',
+  },
+  {
+    label: 'every test skipped',
+    answer: { stdout: ' Test Files  6 skipped (6)\n      Tests  330 skipped (330)\n' },
+    expected: 'vitest skipped every one of its 330 tests',
+  },
+  {
+    label: 'skipped and todo reach the count',
+    answer: { stdout: ' Test Files  1 skipped (1)\n      Tests  2 skipped | 1 todo (3)\n' },
+    expected: 'vitest skipped every one of its 3 tests',
+  },
+  {
+    label: 'no Tests line',
+    answer: { stdout: 'No test files found, exiting with code 0\n' },
+    expected: 'vitest counted no test',
+  },
+  {
+    label: 'a failed run',
+    answer: { exitCode: 1, stdout: '      Tests  1 failed | 2 passed (3)\n' },
+    expected: 'vitest run --coverage exited 1',
+  },
+];
+
+test.each([...COUNT_CASES])('the test row: $label', async ({ answer: given, expected }: CountCase) => {
+  answer = vitestAnswers(given);
+
+  expect(await lineOrMessage(() => row('test').check(false))).toStartWith(expected);
+});
+
+/** A finished vitest run that printed `stdout` and exited 0. */
+function vitestRun(stdout: string): Finished {
+  return { exitCode: 0, stdout, stderr: '', heldOpen: false };
+}
+
+// A skip allowance lets that many skipped or todo tests through and no more,
+// and never lets every test be skipped.
+test.each([
+  ['within it passes and names the skips', 2, 'line: 10 tests across 1 file, 2 skipped'],
+  ['past it fails', 1, 'vitest skipped or left to do 2 of its 10 tests, past the 1 the row allows'],
+])('a vitest skip allowance: a count %s', (_label: string, allowed: number, expected: string) => {
+  const finished = vitestRun(' Test Files  1 passed (1)\n      Tests  8 passed | 2 skipped (10)\n');
+
+  expect(outcomeOf(() => check.vitestCount(finished, allowed))).toStartWith(expected);
+});
+
+test('a vitest skip allowance never passes a run whose every test was skipped', () => {
+  const finished = vitestRun(' Test Files  1 skipped (1)\n      Tests  3 skipped (3)\n');
+
+  expect(outcomeOf(() => check.vitestCount(finished, 5))).toStartWith('vitest skipped every one of its 3 tests');
+});
+
+/** What running `work` ended with: `line: ` and what it returned, or the message it threw. */
+function outcomeOf(work: () => string): string {
+  try {
+    return `line: ${work()}`;
+  } catch (error: unknown) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+test('the test row names vitest.config.mts and runs vitest with CI set', async () => {
+  await row('test').check(false);
+
+  const [call] = callsToEntry('vitest/vitest.mjs');
+  expect(call?.cmd.slice(3)).toEqual(['run', '--coverage', '--config', 'vitest.config.mts']);
+  expect(call?.env['CI']).toBe('true');
+});
+
+/* ///// scripts:test ///// */
+
+test('scripts:test runs bun test with CI set', async () => {
+  await row('scripts:test').check(false);
+
+  expect(calls[0]?.env['CI']).toBe('true');
+});
+
+test('scripts:test fails when bun test ran no test', async () => {
+  answer = (cmd: readonly string[]): Answer =>
+    isBunTest(cmd) ? { stderr: 'Ran 0 tests across 1 file.\n' } : passing(cmd);
+
+  expect(await lineOrMessage(() => row('scripts:test').check(false))).toStartWith('bun test ./scripts/ ran no test');
+});
+
+/* ///// Color in what a tool prints ///// */
+
+const ESC = String.fromCharCode(27);
+
+/** `text` between an SGR code and a reset, as a tool colors a word. */
+function colored(text: string): string {
+  return `${ESC}[1m${text}${ESC}[0m`;
+}
+
+test('the test row reads a vitest summary written in color', async () => {
+  answer = vitestAnswers({
+    stdout: `${colored(' Test Files')}  ${colored('6 passed')} (6)\n${colored('      Tests')}  ${colored('330 passed')} (330)\n`,
+  });
+
+  expect(await lineOrMessage(() => row('test').check(false))).toBe('line: 330 tests across 6 files');
+});
+
+test('scripts:test reads a bun test summary written in color, its skip line included', async () => {
+  answer = (cmd: readonly string[]): Answer =>
+    isBunTest(cmd)
+      ? { stderr: ` ${colored('3 pass')}\n ${colored('1 skip')}\n${colored('Ran')} 4 tests across 1 file.\n` }
+      : passing(cmd);
+
+  expect(await lineOrMessage(() => row('scripts:test').check(false))).toBe('line: 4 tests across 1 file, 1 skipped');
+});
+
+/** A row, and an answer that colors the part of one tool's output that row reads. */
+interface ColorCase {
+  readonly name: string;
+  readonly tool: string;
+  readonly answer: (cmd: readonly string[]) => Answer;
+}
+
+const COLOR_CASES: readonly ColorCase[] = [
+  {
+    name: 'typecheck',
+    tool: "tsc's --listFiles line",
+    answer: (cmd: readonly string[]): Answer =>
+      entry(cmd) === '@typescript/native/bin/tsc'
+        ? { stdout: `${colored(resolve('src/a.ts').replaceAll('\\', '/'))}\n` }
+        : passing(cmd),
+  },
+  {
+    name: 'taplo',
+    tool: "taplo's found line",
+    answer: (cmd: readonly string[]): Answer =>
+      cmd[0] === binaryPath('taplo')
+        ? { stderr: `found files ${colored('total=1')} excluded=0 files=["config.toml"]` }
+        : passing(cmd),
+  },
+  {
+    name: 'actionlint',
+    tool: "actionlint's -verbose line and both canaries' findings",
+    answer: (cmd: readonly string[]): Answer => {
+      if (cmd[0] !== binaryPath('actionlint')) {
+        return passing(cmd);
+      }
+      if (cmd.includes('-verbose')) {
+        return { stderr: `${colored('verbose:')} Found total 0 errors in 1 ms for .github/workflows/ci.yml\n` };
+      }
+      return (cmd.at(-1) ?? '').endsWith('directive.yml')
+        ? { exitCode: 1, stdout: `SC0:error:1:1: A ${colored('ShellCheck')} directive is refused` }
+        : { exitCode: 1, stdout: `SC${colored('2086')}:info:2:6` };
+    },
+  },
+  {
+    name: 'zizmor',
+    tool: "zizmor's completed line",
+    answer: (cmd: readonly string[]): Answer =>
+      cmd[0] === binaryPath('zizmor') && !cmd.includes('--no-config')
+        ? { stderr: `${colored('completed')} .github/workflows/ci.yml\n` }
+        : passing(cmd),
+  },
+];
+
+test.each([...COLOR_CASES])('$name reads $tool written in color', async ({ name, answer: colors }: ColorCase) => {
+  plantTree();
+  answer = colors;
+
+  expect(await outcome(() => row(name).check(true))).toBe('passed');
+});
+
+/* ///// format:check and Prettier's ignore comment ///// */
+
+// Written in two halves, so the format row that checks this file finds no comment here.
+const PRETTIER_IGNORE = ['prettier', 'ignore'].join('-');
+
+test("format:check refuses Prettier's ignore comment before Prettier starts", async () => {
+  plantTree();
+  writeFileSync('src/a.ts', `const kept = 1;\n// ${PRETTIER_IGNORE}\nconst skipped   =   2;\n`);
+
+  const message = await outcome(() => row('format:check').check(false));
+
+  expect(message).toContain('"src/a.ts" line 2');
+  expect(message).toContain('Prettier ignore comment');
+  expect(callsToEntry('prettier/bin/prettier.cjs')).toEqual([]);
+});
+
+/* ///// typecheck coverage ///// */
+
+test('typecheck fails on a tracked TypeScript file that no project reads', async () => {
+  plantTree();
+  writeFileSync('src/b.ts', 'x\n');
+  answer = (cmd: readonly string[]): Answer =>
+    cmd[0] === 'git' && cmd[1] === 'ls-files' && !cmd.includes('--error-unmatch')
+      ? { stdout: [...TRACKED, 'src/b.ts'].map((path) => `${path}\0`).join('') }
+      : passing(cmd);
+
+  expect(await outcome(() => row('typecheck').check(false))).toContain('no project reads "src/b.ts"');
+});
+
+/* ///// The ShellCheck stand-in and the canaries ///// */
+
+/** The words actionlint's `-shellcheck=` flag carries in `cmd`, or undefined. */
+function shellcheckFlag(cmd: readonly string[]): string | undefined {
+  return cmd.find((arg) => arg.startsWith('-shellcheck='))?.slice('-shellcheck='.length);
+}
+
+/** `path` as actionlint reads one word of the flag: single-quoted, with forward slashes. */
+function word(path: string): string {
+  return `'${path.replaceAll('\\', '/')}'`;
+}
+
+// actionlint splits the flag into words and drops the backslashes of an
+// unquoted Windows path, so each word is quoted with forward slashes.
+test('actionlint hands ShellCheck to the stand-in: the gate Bun, no env file, the stand-in, then ShellCheck', async () => {
+  plantTree();
+
+  await row('actionlint').check(false);
+
+  const flags = callsTo(binaryPath('actionlint')).map((call) => shellcheckFlag(call.cmd));
+  expect(flags.length).toBe(3);
+  for (const flag of flags) {
+    expect(flag).toBe(
+      [process.execPath, '--no-env-file', join(ROOT, 'scripts', 'shellcheck.ts'), binaryPath('shellcheck')]
+        .map((path) => word(path))
+        .join(' '),
+    );
+  }
+});
+
+interface CanaryCase {
+  readonly label: string;
+  readonly canary: string;
+  readonly answer: Answer;
+  readonly expected: string;
+}
+
+// A canary proves the wiring only when actionlint exits 1 with the one
+// finding the canary carries, so any other exit or text turns the row red
+// naming that canary, before any workflow is linted.
+const CANARY_CASES: readonly CanaryCase[] = [
+  {
+    label: 'the finding canary without SC2086',
+    canary: 'finding.yml',
+    answer: { exitCode: 1, stdout: 'finding.yml:8:9: some other finding' },
+    expected: 'actionlint reported no "SC2086" over the finding.yml canary',
+  },
+  {
+    label: 'the directive canary without the refusal',
+    canary: 'directive.yml',
+    answer: { exitCode: 1, stdout: 'directive.yml:8:9: shellcheck reported issue in this script: SC2086:info:2:6' },
+    expected: 'actionlint reported no "A ShellCheck directive is refused" over the directive.yml canary',
+  },
+  {
+    label: 'the finding canary exiting 0',
+    canary: 'finding.yml',
+    answer: { exitCode: 0, stdout: 'finding.yml:8:9: SC2086' },
+    expected: 'actionlint over the finding.yml canary exited 0',
+  },
+  {
+    label: 'the directive canary exiting 0',
+    canary: 'directive.yml',
+    answer: { exitCode: 0, stdout: 'A ShellCheck directive is refused' },
+    expected: 'actionlint over the directive.yml canary exited 0',
+  },
+];
+
+test.each([...CANARY_CASES])('actionlint fails on $label', async ({ canary, answer: given, expected }: CanaryCase) => {
+  plantTree();
+  answer = (cmd: readonly string[]): Answer =>
+    cmd[0] === binaryPath('actionlint') && (cmd.at(-1) ?? '').endsWith(canary) ? given : passing(cmd);
+
+  expect(await outcome(() => row('actionlint').check(false))).toStartWith(expected);
+  expect(callsTo(binaryPath('actionlint')).some((call) => call.cmd.includes('-verbose'))).toBe(false);
+});
+
+test('actionlint refuses a ShellCheck path holding a single quote before actionlint starts', async () => {
+  plantTree();
+  quotedShellcheck = true;
+  try {
+    await row('tools').check(false);
+    calls = [];
+
+    const message = await outcome(() => row('actionlint').check(false));
+
+    expect(message).toContain('holds a single quote');
+    expect(callsTo(binaryPath('actionlint'))).toEqual([]);
+  } finally {
+    quotedShellcheck = false;
+    await row('tools').check(false);
+  }
+});
+
+/* ///// The secrets-inherit hold ///// */
+
+/** zizmor's report of one job passing secrets: inherit from `file` to `callee`. */
+function inheritedCall(file: string, callee: string): (typeof INHERITED)[number] {
+  return {
+    ident: 'secrets-inherit',
+    locations: [
+      {
+        symbolic: { kind: 'Primary', key: { Local: { verbatim_path: `.github/workflows/${file}` } } },
+        concrete: { feature: callee, location: { start_point: { row: 9 } } },
+      },
+    ],
+  };
+}
+
+/** The answer for every call but the hold's zizmor run, which prints `report`. */
+function holdAnswers(report: unknown): (cmd: readonly string[]) => Answer {
+  return (cmd: readonly string[]): Answer =>
+    cmd[0] === binaryPath('zizmor') && cmd.includes('--no-config')
+      ? { exitCode: 13, stdout: JSON.stringify(report) }
+      : passing(cmd);
+}
+
+// The hold runs zizmor with no config and inline ignores off, so it sees every
+// job that passes secrets: inherit, waived or not, and no ZIZMOR_CONFIG can
+// name a config against --no-config.
+test('the hold runs zizmor over .github with no config, no ignores and json output', async () => {
+  plantTree();
+
+  await row('zizmor').check(true);
+
+  const hold = callsTo(binaryPath('zizmor')).find((call) => call.cmd.includes('--no-config'));
+  expect(hold?.cmd.slice(1)).toEqual([
+    '--no-progress',
+    '--offline',
+    '--no-config',
+    '--no-ignores',
+    '--strict-collection',
+    '--format',
+    'json',
+    '--collect=all',
+    '.github',
+  ]);
+  expect(Object.hasOwn(hold?.env ?? {}, 'ZIZMOR_CONFIG')).toBe(true);
+  expect(hold?.env['ZIZMOR_CONFIG']).toBeUndefined();
+});
+
+test('the hold refuses a job that passes secrets: inherit outside zachthedev/.github', async () => {
+  plantTree();
+  answer = holdAnswers([
+    inheritedCall('cd.yml', 'someone-else/.github/.github/workflows/release-pr.yml@abc'),
+    inheritedCall('deps.yml', 'zachthedev/.github/.github/workflows/deps.yml@abc'),
+  ]);
+
+  const message = await outcome(() => row('zizmor').check(true));
+
+  expect(message).toContain('".github/workflows/cd.yml" line 10');
+  expect(message).toContain('"someone-else/.github/.github/workflows/release-pr.yml@abc"');
+});
+
+test('the hold refuses a waived file that holds no such job', async () => {
+  plantTree();
+  answer = holdAnswers([inheritedCall('cd.yml', 'zachthedev/.github/.github/workflows/release-pr.yml@abc')]);
+
+  expect(await outcome(() => row('zizmor').check(true))).toContain('the secrets-inherit waiver names "deps.yml"');
+});
+
+test('the hold reads its waivers from the committed zizmor.yml', async () => {
+  plantTree();
+  writeFileSync(
+    '.github/zizmor.yml',
+    'rules:\n  secrets-inherit:\n    ignore:\n      - cd.yml\n      - deps.yml\n      - release.yml\n',
+  );
+
+  expect(await outcome(() => row('zizmor').check(true))).toContain('the secrets-inherit waiver names "release.yml"');
+});
+
+test('the hold fails on a zizmor.yml that does not parse', async () => {
+  plantTree();
+  writeFileSync('.github/zizmor.yml', 'rules: [unclosed\n');
+
+  expect(await outcome(() => row('zizmor').check(true))).toContain('.github/zizmor.yml does not parse');
 });

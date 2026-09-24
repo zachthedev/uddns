@@ -22,7 +22,7 @@ import { dlopen, FFIType, type Pointer, ptr, toArrayBuffer } from 'bun:ffi';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { describe, type Finished, fold, PROXY_NAMES, quote, run } from './run';
+import { describe, type Finished, fold, plain, PROXY_NAMES, quote, run } from './run';
 import { directoryEntries, isTable, LOCK, PINS, quoteValue, sameValue } from './startup';
 
 /** The command that rewrites {@link LOCK} after an edit to {@link PINS}. */
@@ -204,12 +204,6 @@ export function miseEnvironment(): Record<string, string> {
     MISE_TRUSTED_CONFIG_PATHS: root,
   };
 }
-
-/** The deadline for one mise command that reads or resolves. */
-const READ_TIMEOUT_MS = 60_000;
-
-/** The deadline for the install, which downloads every tool on a fresh machine. */
-const INSTALL_TIMEOUT_MS = 600_000;
 
 /**
  * A tool {@link PINS} names, and the GitHub release its artifacts come from.
@@ -752,12 +746,12 @@ export async function lockfileFindings(): Promise<string[]> {
  *
  * @throws When {@link lockfileFindings} reports anything, with the findings
  */
-async function mise(args: readonly string[], timeoutMs: number): Promise<Finished> {
+async function mise(args: readonly string[]): Promise<Finished> {
   const found = await lockfileFindings();
   if (found.length > 0) {
     throw new Error(found.join('\n'));
   }
-  return run(['mise', ...args], timeoutMs, miseEnvironment(), { inherit: false });
+  return run(['mise', ...args], miseEnvironment(), { inherit: false });
 }
 
 /**
@@ -774,7 +768,7 @@ async function mise(args: readonly string[], timeoutMs: number): Promise<Finishe
  * @throws When the files fail their assertions or the install fails
  */
 export async function install(): Promise<void> {
-  const finished = await mise(['install', '--locked'], INSTALL_TIMEOUT_MS);
+  const finished = await mise(['install', '--locked']);
   if (finished.exitCode !== 0) {
     throw new Error(`mise install --locked ${describe(finished)}`);
   }
@@ -796,14 +790,20 @@ export async function resolve(): Promise<ReadonlyMap<string, string>> {
     if (version === undefined) {
       throw new Error(`${PINS} pins no version of ${tool.key}`);
     }
-    const located = await mise(['which', tool.binary], READ_TIMEOUT_MS);
-    const path = located.stdout.trim();
-    if (located.exitCode !== 0 || path.length === 0) {
+    const located = await mise(['which', tool.binary]);
+    const path = plain(located.stdout).trim();
+    if (located.exitCode !== 0) {
+      throw new Error(`mise which ${tool.binary} ${describe(located)}`);
+    }
+    if (path.length === 0) {
       throw new Error(`mise which ${tool.binary} found nothing. Install it with: mise install`);
     }
-    const printed = await run([path, tool.versionFlag], READ_TIMEOUT_MS);
-    const reported = /\d+\.\d+\.\d+/.exec(`${printed.stdout}\n${printed.stderr}`)?.[0] ?? '';
-    if (printed.exitCode !== 0 || reported !== version) {
+    const printed = await run([path, tool.versionFlag]);
+    if (printed.exitCode !== 0) {
+      throw new Error(`${path} ${tool.versionFlag} ${describe(printed)}`);
+    }
+    const reported = /\d+\.\d+\.\d+/.exec(plain(`${printed.stdout}\n${printed.stderr}`))?.[0] ?? '';
+    if (reported !== version) {
       throw new Error(
         `${path} reports ${tool.key} ${reported}, and ${PINS} pins ${quote(version)}. Install it with: mise install`,
       );

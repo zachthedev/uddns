@@ -8,9 +8,11 @@ rules:
         '*': hash-pin
   # cd.yml's release-pr job and deps.yml's deps job hand their called workflow every secret. Each
   # called job names an environment, and a caller that runs in none cannot pass that environment's
-  # secret by name. The comment above each job says so. Each entry is the file, line and column of
-  # the job's uses value, so a call that moves loses its waiver and the audit reports it again.
+  # secret by name. The comment above each job says so. Each entry names a file, and a file entry
+  # waives every job there that passes secrets: inherit, whatever it calls. The gate's workflows row
+  # binds the callee: it reads zizmor with no config and refuses any such job whose uses is not a
+  # reusable workflow of zachthedev/.github.
   secrets-inherit:
     ignore:
-      - cd.yml:32:11
-      - deps.yml:30:11
+      - cd.yml
+      - deps.yml

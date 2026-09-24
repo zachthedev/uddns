@@ -16,27 +16,79 @@ export function quote(value: string): string {
   );
 }
 
+/** The character with code point `code`, so no control character is written into this file as a literal. */
+const character = (code: number): string => String.fromCharCode(code);
+
+/**
+ * Every character that prints nothing or moves the cursor: the C0 controls
+ * but tab and newline, DEL, the C1 controls, and every {@link INVISIBLE}
+ * character.
+ */
+const UNPRINTABLE = new RegExp(
+  `[${character(0)}-${character(8)}${character(0x0b)}-${character(0x1f)}${character(0x7f)}-${character(0x9f)}]|${INVISIBLE.source}`,
+  'g',
+);
+
+/**
+ * `text`, a line the gate prints, with Windows line endings made plain and
+ * every {@link UNPRINTABLE} character written as its `\u` escape.
+ *
+ * @remarks
+ * A row's message carries tool output, and a tool quotes the files it reads,
+ * so a job id or path in a workflow reaches the terminal through it. An
+ * escape sequence or a carriage return there could rewrite the lines above
+ * it, so the gate prints every line through this.
+ */
+export function printable(text: string): string {
+  return text
+    .replaceAll('\r\n', '\n')
+    .replace(UNPRINTABLE, (found) => `\\u${found.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/**
+ * An ANSI control sequence: ESC and `[`, or the one-byte CSI, then parameter
+ * bytes, intermediate bytes and a final byte. Or an operating system command,
+ * such as a terminal hyperlink: ESC and `]`, then any text up to BEL or ESC
+ * and a backslash.
+ */
+const CONTROL_SEQUENCE = new RegExp(
+  `(?:${character(0x1b)}\\[|${character(0x9b)})[0-?]*[ -/]*[@-~]|${character(0x1b)}\\][^${character(0x07)}${character(0x1b)}]*(?:${character(0x07)}|${character(0x1b)}\\\\)`,
+  'g',
+);
+
+/**
+ * `printed`, a tool's output, with every ANSI control sequence removed and
+ * Windows line endings made plain, so a pattern matches colored output as it
+ * matches plain output.
+ *
+ * @remarks
+ * Every child gets NO_COLOR, and yet a tool can color its output on one
+ * machine alone, as `dotnet test` does on a GitHub runner, so every parser of
+ * tool output reads through this.
+ */
+export function plain(printed: string): string {
+  return printed.replace(CONTROL_SEQUENCE, '').replaceAll('\r\n', '\n');
+}
+
 /** Code points Unicode lists as default-ignorable, which HFS+ leaves out when it compares names. */
 const IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
 
 /**
- * `name` keyed for comparison against a name a tool reads: compatibility
- * normalized, default-ignorable code points removed, then mapped to upper and
- * back to lower case, and normalized again.
+ * `name` keyed for comparison against a name a tool reads: default-ignorable
+ * code points removed, then mapped to upper and back to lower case. This is
+ * the set's one folding rule, the same in every stack's gate.
  *
  * @remarks
  * A case-insensitive filesystem hands a tool a tracked file under a spelling
- * that differs from the one the tool asks for. The key merges everything
- * simple case folding merges with an ASCII letter, which is ſ with s and the
- * Kelvin sign with k, beside ASCII case. It also merges full case folding's
- * expansions such as ß with ss, compatibility forms such as ﬁ with fi,
- * dotless ı with i, and the ignorable marks HFS+ skips. Every name the gate
- * refuses is ASCII and every file it names passes in its exact spelling
- * alone, so a merge beyond what a filesystem does costs a false refusal at
- * worst.
+ * that differs from the one the tool asks for. The key merges ASCII case, the
+ * letters that map to an ASCII one such as ſ with s and the Kelvin sign with
+ * k, full case mapping's expansions such as ß with ss and ﬁ with fi, dotless ı
+ * with i, and the ignorable marks HFS+ skips. Every name the gate refuses is
+ * ASCII and every file it names passes in its exact spelling alone, so a merge
+ * beyond what a filesystem does costs a false refusal at worst.
  */
 export function fold(name: string): string {
-  return name.normalize('NFKC').replace(IGNORABLE, '').toUpperCase().toLowerCase().normalize('NFKC');
+  return name.replace(IGNORABLE, '').toUpperCase().toLowerCase();
 }
 
 /**
@@ -46,8 +98,9 @@ export function fold(name: string): string {
  * A file at the repository root named like one of these, with any extension
  * or none, is refused before any row. {@link resolveProgram} never reads
  * the working directory, so none of them can stand in for the program either
- * way. The gate starts gh, git and mise by name, the hooks start bun and
- * bunx, and lefthook's install script starts node.
+ * way. The gate starts gh, git and mise by name, the hooks and the
+ * package.json scripts start bun, lefthook's install script starts node, and
+ * bunx is the name a contributor types to run a package.
  */
 export const PROGRAM_NAMES: readonly string[] = ['bun', 'bunx', 'gh', 'git', 'mise', 'node'];
 
@@ -177,36 +230,34 @@ export function resolveProgram(program: string): string | undefined {
  */
 export interface Finished {
   /**
-   * The exit code, or -1 when the process was killed at its deadline or a
-   * process it started held its output open after it exited.
+   * The exit code, or -1 when a process it started held its output open after
+   * it exited.
    */
   readonly exitCode: number;
   /** Standard output, decoded as UTF-8. */
   readonly stdout: string;
   /** Standard error, decoded as UTF-8. */
   readonly stderr: string;
-  /** True when the process ran past `timeoutMs` and was killed. */
-  readonly timedOut: boolean;
   /**
    * True when the process exited and a process it started still held its
-   * output open {@link KILL_GRACE_MS} later, so what it printed may be cut
-   * short.
+   * output open {@link DRAIN_MS} later, so what it printed may be cut short.
    */
   readonly heldOpen: boolean;
 }
 
-/** How {@link run} starts a process, beyond its command, deadline and variables. */
+/** How {@link run} starts a process, beyond its command and variables. */
 export interface RunOptions {
-  /**
-   * When true the process writes to the gate's own stdout and stderr, so a
-   * report it prints reaches the log, and the captured streams are empty.
-   */
-  readonly show?: boolean;
   /**
    * When false the process starts with the given variables alone and
    * inherits nothing from the gate's environment.
    */
   readonly inherit?: boolean;
+  /**
+   * How long the process may run before Bun kills it, the process alone and
+   * with no tree kill. Only a caller that reads no answer as its own fallback
+   * passes one, as the gh token read does.
+   */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -224,77 +275,38 @@ export const PROXY_NAMES: readonly string[] = [
 ];
 
 /**
- * How long the tree kill, and the reads after it, may take once a deadline
- * passes, and how long a process's output may stay open after it exits.
+ * What every process that inherits the gate's environment gets, so no tool
+ * colors its output: NO_COLOR set, and the two names that force color
+ * removed. Bun 1.4.2 colors bun test's summary under FORCE_COLOR even with
+ * NO_COLOR set.
  */
-const KILL_GRACE_MS = 10_000;
+const COLORLESS: Readonly<Record<string, string | undefined>> = {
+  NO_COLOR: '1',
+  FORCE_COLOR: undefined,
+  CLICOLOR_FORCE: undefined,
+};
 
 /**
- * Kills `child`, which is still running, and every process it started, at a
- * deadline.
- *
- * @remarks
- * A tool can start processes of its own, as actionlint starts ShellCheck and
- * tsc's launcher starts the compiler, and killing the tool alone leaves them
- * running with no parent. Windows walks the tree with `taskkill /T`. POSIX
- * has no such command, so the tree comes from one `ps` listing of every
- * process and its parent. A process group would need a new session, and a
- * child in its own session never sees the Ctrl-C that stops the gate. The
- * child itself dies through Bun's handle, which ends nothing once it exited,
- * and it dies first, so it starts no process after the listing.
+ * What every process that inherits the gate's environment goes without: the
+ * variables every Bun reads before its own arguments. BUN_OPTIONS carries
+ * arguments ahead of them, where a test name pattern hides tests from a count
+ * and a preload or an env file reaches inside a tool, and BUN_INSPECT_PRELOAD
+ * runs a module in every Bun start. On Windows Bun reads each name in any
+ * spelling.
  */
-function killTree(child: ReturnType<typeof Bun.spawn>): void {
-  const descendants: number[] = [];
-  if (process.platform === 'win32') {
-    const taskkill = resolveProgram('taskkill');
-    if (taskkill !== undefined) {
-      Bun.spawnSync({
-        cmd: [taskkill, '/T', '/F', '/PID', String(child.pid)],
-        stdout: 'ignore',
-        stderr: 'ignore',
-        timeout: KILL_GRACE_MS,
-      });
-    }
-  } else {
-    const ps = resolveProgram('ps');
-    if (ps !== undefined) {
-      const listed = Bun.spawnSync({
-        cmd: [ps, '-A', '-o', 'pid=', '-o', 'ppid='],
-        stdout: 'pipe',
-        stderr: 'ignore',
-        timeout: KILL_GRACE_MS,
-      });
-      const children = new Map<number, number[]>();
-      for (const line of listed.stdout.toString().split('\n')) {
-        const fields = line.trim().split(/\s+/);
-        const pid = Number(fields[0]);
-        const parent = Number(fields[1]);
-        if (fields.length === 2 && Number.isInteger(pid) && Number.isInteger(parent)) {
-          children.set(parent, [...(children.get(parent) ?? []), pid]);
-        }
-      }
-      const tree = [child.pid];
-      // An array's iterator reads its length on every step, so the loop walks what it appends.
-      for (const member of tree) {
-        tree.push(...(children.get(member) ?? []).filter((pid) => !tree.includes(pid)));
-      }
-      descendants.push(...tree.slice(1));
-    }
-  }
-  child.kill('SIGKILL');
-  for (const pid of descendants) {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already gone: it ended with the child or on its own.
-    }
-  }
-}
+const WITHHELD: Readonly<Record<string, undefined>> = {
+  BUN_OPTIONS: undefined,
+  BUN_INSPECT: undefined,
+  BUN_INSPECT_PRELOAD: undefined,
+  BUN_INSPECT_CONNECT_TO: undefined,
+};
+
+/** How long a process's output may stay open after it exits, since a process it started can hold it. */
+const DRAIN_MS = 10_000;
 
 /**
- * Everything `stream` carries, decoded as UTF-8, or nothing when the process
- * writes to the gate's own streams. The read stops when `stop` settles, so a
- * process left holding a pipe open cannot hold the gate.
+ * Everything `stream` carries, decoded as UTF-8. The read stops when `stop`
+ * settles, so a process left holding a pipe open cannot hold the gate.
  */
 async function readAll(stream: unknown, stop: Promise<void>): Promise<string> {
   if (!(stream instanceof ReadableStream)) {
@@ -321,13 +333,11 @@ async function readAll(stream: unknown, stop: Promise<void>): Promise<string> {
  * Runs one command to completion with its output captured.
  *
  * @remarks
- * Every process the gate starts goes through here, so every one carries a
- * deadline. A tool that hangs is a red row, not a hung gate. At the deadline
- * a process still running is killed with every process it started. A process
- * that already exited is never killed by its pid, which the system is free to
- * give another process. When a process it started still holds its output
- * {@link KILL_GRACE_MS} after it exited, the run fails, and that process runs
- * on, since nothing Bun offers reaches a process whose parent is gone.
+ * Every process the gate starts goes through here. No row carries a deadline:
+ * the CI job's timeout-minutes bounds the gate, and Ctrl-C ends a local run.
+ * When a process it started still holds its output {@link DRAIN_MS} after it
+ * exited, the run fails, and that process runs on, since nothing Bun offers
+ * reaches a process whose parent is gone.
  *
  * The program starts from the path {@link resolveProgram} finds, never from
  * the working directory. A program no absolute PATH entry holds is a failed
@@ -335,11 +345,11 @@ async function readAll(stream: unknown, stop: Promise<void>): Promise<string> {
  * a missing prerequisite reads like any other red row rather than a crash of
  * the gate. A process that inherits the gate's environment gets PATH as the
  * {@link searchedDirectories} alone, so a program it starts by name resolves
- * outside the repository too, and gets every {@link PROXY_NAMES} value the
- * gate can read.
+ * outside the repository too, gets every {@link PROXY_NAMES} value the gate
+ * can read, and gets {@link COLORLESS} and goes without {@link WITHHELD},
+ * in every spelling, unless `env` names the same variables.
  *
  * @param cmd - The program and its arguments, the program first
- * @param timeoutMs - The deadline, after which the process is killed
  * @param env - Variables added to the gate's own environment for this process,
  * or its whole environment when `options.inherit` is false. Each replaces
  * every inherited spelling of its name, because Windows reads a name without
@@ -349,14 +359,14 @@ async function readAll(stream: unknown, stop: Promise<void>): Promise<string> {
  */
 export async function run(
   cmd: readonly string[],
-  timeoutMs: number,
   env: Readonly<Record<string, string | undefined>> = {},
   options: RunOptions = {},
 ): Promise<Finished> {
-  const show = options.show === true;
-  const replaced = new Set(Object.keys(env).map((name) => name.toUpperCase()));
+  const inherit = options.inherit !== false;
+  const given = inherit ? { ...COLORLESS, ...WITHHELD, ...env } : env;
+  const replaced = new Set(Object.keys(given).map((name) => name.toUpperCase()));
   const merged: Record<string, string> = {};
-  if (options.inherit !== false) {
+  if (inherit) {
     if (!replaced.has('PATH')) {
       replaced.add('PATH');
       merged['PATH'] = searchedDirectories().join(delimiter);
@@ -379,7 +389,7 @@ export async function run(
       }
     }
   }
-  for (const [name, value] of Object.entries(env)) {
+  for (const [name, value] of Object.entries(given)) {
     if (value !== undefined) {
       merged[name] = value;
     }
@@ -391,7 +401,6 @@ export async function run(
       exitCode: 127,
       stdout: '',
       stderr: `${program}: no absolute PATH entry holds it, and the working directory is never searched`,
-      timedOut: false,
       heldOpen: false,
     };
   }
@@ -402,48 +411,34 @@ export async function run(
       cwd: process.cwd(),
       env: merged,
       stdin: 'ignore',
-      stdout: show ? 'inherit' : 'pipe',
-      stderr: show ? 'inherit' : 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    return { exitCode: 127, stdout: '', stderr: `${program}: ${message}`, timedOut: false, heldOpen: false };
+    return { exitCode: 127, stdout: '', stderr: `${program}: ${message}`, heldOpen: false };
   }
-  let timedOut = false;
   let heldOpen = false;
-  let exited = false;
   let settled = false;
   let stopReading: () => void = () => undefined;
   const stopped = new Promise<void>((resolve) => {
     stopReading = resolve;
   });
-  let grace: ReturnType<typeof setTimeout> | undefined;
   let drain: ReturnType<typeof setTimeout> | undefined;
   void child.exited.then(() => {
-    exited = true;
     if (!settled) {
       drain = setTimeout(() => {
         heldOpen = true;
         stopReading();
-      }, KILL_GRACE_MS);
+      }, DRAIN_MS);
     }
   });
-  const deadline = setTimeout(() => {
-    // An exited child's pid can belong to another process by now, and the drain above ends the reads.
-    if (exited) {
-      return;
-    }
-    timedOut = true;
-    killTree(child);
-    grace = setTimeout(stopReading, KILL_GRACE_MS);
-  }, timeoutMs);
   const [stdout, stderr] = await Promise.all([readAll(child.stdout, stopped), readAll(child.stderr, stopped)]);
   const exitCode = await Promise.race([child.exited, stopped.then(() => -1)]);
   settled = true;
-  clearTimeout(deadline);
-  clearTimeout(grace);
   clearTimeout(drain);
-  return { exitCode: timedOut || heldOpen ? -1 : exitCode, stdout, stderr, timedOut, heldOpen };
+  return { exitCode: heldOpen ? -1 : exitCode, stdout, stderr, heldOpen };
 }
 
 /**
@@ -452,10 +447,8 @@ export async function run(
  */
 export function describe(finished: Finished): string {
   const printed: string = [finished.stdout, finished.stderr].join('\n').trim();
-  const ending: string = finished.timedOut
-    ? 'was killed at its deadline'
-    : finished.heldOpen
-      ? `exited, and a process it started still held its output ${String(KILL_GRACE_MS / 1000)} s later and runs on, so its output may be cut short. Find and end that process`
-      : `exited ${String(finished.exitCode)}`;
+  const ending: string = finished.heldOpen
+    ? `exited, and a process it started still held its output ${String(DRAIN_MS / 1000)} s later and runs on, so its output may be cut short. Find and end that process`
+    : `exited ${String(finished.exitCode)}`;
   return `${ending} saying: ${printed.length === 0 ? 'nothing' : printed}`;
 }

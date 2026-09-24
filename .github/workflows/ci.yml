@@ -81,9 +81,10 @@ jobs:
       # The file itself, not `bun run check`: the script runner puts the
       # checkout's node_modules/.bin ahead of PATH, where a committed bun would
       # run in place of the gate, and the gate refuses a tracked node_modules
-      # path before any row.
+      # path before any row. --no-env-file, as every start of the gate has, so
+      # no env file on disk sets a variable in it.
       - name: Verify
-        run: bun scripts/check.ts
+        run: bun --no-env-file scripts/check.ts
 
   # Runs in CI alone: the scan needs the pull request's base and head commits
   # and the official action, which no working machine has. GitHub push

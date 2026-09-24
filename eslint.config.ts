@@ -1,3 +1,4 @@
+import comments from '@eslint-community/eslint-plugin-eslint-comments/configs';
 import eslint from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import prettierConfig from 'eslint-config-prettier';
@@ -16,6 +17,39 @@ export default defineConfig(
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
+
+  // An inline ESLint directive names each rule it turns off and gives its
+  // reason after `--`. The recommended set refuses a disable that names no
+  // rule or is never closed, and require-description refuses one with no
+  // reason. ESLint reports a directive that silences nothing, and the lint row
+  // allows no warning.
+  comments.recommended,
+  {
+    rules: {
+      '@eslint-community/eslint-comments/require-description': 'error',
+    },
+  },
+
+  // Bun runs any file as code under an import attribute naming a loader, such
+  // as `with { type: 'js' }` on a .txt import, which no row reads as code. An
+  // import carries `type: 'json'` or no attribute, and a dynamic import takes
+  // no options.
+  {
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "ImportAttribute:not([key.name='type'][value.value='json']):not([key.value='type'][value.value='json'])",
+          message: "Bun runs a file as code under a loader attribute. Import with `type: 'json'` or no attribute.",
+        },
+        {
+          selector: 'ImportExpression[options]',
+          message: 'Bun runs a file as code under a loader attribute. Import JSON with a static import.',
+        },
+      ],
+    },
+  },
 
   {
     languageOptions: {
@@ -111,8 +145,9 @@ export default defineConfig(
     },
   },
 
-  // Config files at the repo root sit outside the tsconfig projects; lint
-  // them without type information.
+  // commitlint.config.js sits outside every tsconfig project, and the typecheck
+  // row checks eslint.config.ts and vitest.config.mts through
+  // tests/tsconfig.json; lint all three without type information.
   {
     files: ['commitlint.config.js', 'eslint.config.ts', 'vitest.config.mts'],
     extends: [tseslint.configs.disableTypeChecked],

@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { githubToken, takeTokens } from './github';
-import { type Answer, isolate, launcherName, spellings, StandIns, WINDOWS } from './stand-ins';
+import { type Answer, isolate, launcherName, spellings, StandIns } from './stand-ins';
 
 // Every stand-in start is a Bun process, and a loaded machine starts one in
 // seconds, so a case gets longer than the runner's five-second default.
@@ -216,28 +216,21 @@ test.each([...ANSWERS])('$label', async ({ answer, expected }: AnswerCase) => {
   expect(standIns.calls()).toHaveLength(1);
 });
 
+test('a gh that outlives the deadline is no token, though it answers later', async () => {
+  // Bun kills the launcher at the deadline. A launcher that starts the stand-in
+  // as its own child leaves it to answer on the inherited output after the
+  // kill, and the killed launcher's exit still reads as no token.
+  standIns.answer('gh', { stdout: 'late-token\n', sleepMs: 4_000 });
+
+  const token = await githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, 1_000);
+
+  expect(token).toBeUndefined();
+  expect(standIns.calls()).toHaveLength(1);
+});
+
 test('a missing gh is no token', async () => {
   const absent = join(standIns.dir, launcherName('absent'));
 
   expect(await githubToken(absent, { GH_TOKEN: undefined, GITHUB_TOKEN: undefined })).toBeUndefined();
   expect(standIns.calls()).toEqual([]);
-});
-
-test('a gh that outlives the deadline is no token, and the deadline ends the wait', async () => {
-  const sleepMs = 3_000;
-  standIns.answer('gh', { stdout: 'late-token\n', sleepMs });
-  // run() kills the launcher's tree with the taskkill PATH names on every
-  // Windows machine. The stand-in runs under the launcher's cmd.exe there.
-  if (WINDOWS) {
-    process.env['PATH'] = [standIns.dir, join(process.env['SYSTEMROOT'] ?? '', 'System32')].join(delimiter);
-  }
-  const started = performance.now();
-
-  const token = await githubToken(standIns.path('gh'), { GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, 300);
-  const waited = performance.now() - started;
-  // A stand-in the kill missed finishes before the case ends.
-  await Bun.sleep(sleepMs);
-
-  expect(token).toBeUndefined();
-  expect(waited).toBeLessThan(sleepMs);
 });

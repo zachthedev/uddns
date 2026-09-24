@@ -35,9 +35,9 @@ export const WINDOWS = process.platform === 'win32';
 
 // Every launcher starts this. It appends the call to calls.jsonl and answers
 // from <name>.json, keyed by the arguments joined with spaces, or `*`. It
-// moves to the temporary directory first: on Windows a deadline kills the
-// launcher's cmd.exe and not this process, which then outlives its case, and
-// a process holding a directory keeps it from being removed.
+// moves to the temporary directory first: on Windows a kill that reaches the
+// launcher's cmd.exe alone leaves this process running past its case, and a
+// process holding a directory keeps it from being removed.
 const RECORDER = `import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -13,19 +13,18 @@ carries the conventions; this file carries the machine.
   untracked one: mise reads every config and lockfile it finds, `mise.local.toml`, `.mise.toml`,
   `.tool-versions` and `.config/mise/` among them, so the gate's `tools` row refuses any mise file but
   those two.
-- [git](https://git-scm.com). The gate's first check lists the tracked and untracked files through
-  `git ls-files`, before any row, and the `cf-typegen:check` row diffs the types file against the index.
+- [git](https://git-scm.com). The gate's first check names the work tree through `git rev-parse` and lists
+  the tracked and untracked files through `git ls-files`, before any row, and the `cf-typegen:check` row
+  diffs the types file against the index.
 - [GitHub CLI](https://cli.github.com), optional. When `gh auth token` answers, `bun run check` runs
   zizmor online and hands that answer to zizmor alone, so its advisory, impostor-commit and
   version-comment audits can read GitHub.
 
 Every other tool, wrangler included, arrives through `bun install` at the version `package.json` pins.
 These four are every program the gate starts from `PATH`: Bun runs the gate, and the gate starts git, mise
-and gh by name. When a process is still running at its deadline, the gate also starts the system's own
-`taskkill` on Windows, or `ps` elsewhere, to end it and every process it started. A process that already
-exited is never killed by its pid. When one it started still holds its output, the row fails and that
-process runs on, since only a Windows job object reaches a process whose parent is gone, and Bun offers
-none. End it yourself.
+and gh by name. No row has a deadline, and Ctrl-C ends a local run. When a process exits while one it started
+still holds its output, the row fails ten seconds later and that process runs on, since only a Windows job
+object reaches a process whose parent is gone, and Bun offers none. End it yourself.
 
 ## First run
 
@@ -37,7 +36,9 @@ bun run check
 
 `bun install` installs the dependencies and the git hooks. `mise trust` lets mise read this checkout's
 `mise.toml`; the first `bun run check` then downloads the tools it names, and every run after that is
-offline. `bun run check:rows` prints what the gate covers.
+offline. `bun run check:rows` prints what the gate covers. A worktree runs its own `bun install` before its
+first commit, since every hook starts its tool from the worktree's own `node_modules/`, and a Claude Code
+worktree starts with none.
 
 On Windows, the Durable Object and D1 tests run in workerd, which keeps SQLite files under the temp
 directory. A long temp path pushes them past `MAX_PATH`, and every such test fails with `internal error`
@@ -50,7 +51,9 @@ without its test row, for this reason.
 bun run dev
 ```
 
-That is `wrangler dev`, serving the worker at a local URL with KV, D1 and the Durable Object simulated.
+That is `wrangler dev`, serving the worker at a local URL with KV, D1 and the Durable Object simulated. It
+runs under the `node` on `PATH`, since `wrangler dev` under Bun reports ready and answers no request
+([CONTRIBUTING.md#setup](../CONTRIBUTING.md#setup)).
 Worker secrets for the local run come from `.dev.vars`, copied from `.dev.vars.template`; the file is
 gitignored and holds real values, so nothing reads it but wrangler.
 
@@ -59,9 +62,9 @@ domain and access key. [docs/deploy.md](deploy.md) says what a deploy does.
 
 ## Generated files
 
-- `worker-configuration.d.ts`, by `bun run cf-typegen`. The command passes `--env-file .dev.vars.template`,
-  so the committed file carries the template's secret names rather than whichever ones a contributor keeps
-  in `.dev.vars`. The gate's `cf-typegen:check` row refuses the file when git does not track it, deletes
+- `worker-configuration.d.ts`, by `bun run cf-typegen`. The command passes `--config wrangler.jsonc`, since
+  wrangler reads a `wrangler.json` ahead of it, and `--env-file .dev.vars.template`, so the committed file
+  carries the template's secret names rather than whichever ones a contributor keeps in `.dev.vars`. The gate's `cf-typegen:check` row refuses the file when git does not track it, deletes
   it, regenerates the whole of it, and runs `git diff --exit-code` against it, so it compares bytes against
   the index rather than trusting the file's own header. wrangler carries the runtime half forward from an existing file whenever its
   `// Runtime types generated with workerd@` line matches, which is why the row deletes first, and
@@ -79,5 +82,6 @@ domain and access key. [docs/deploy.md](deploy.md) says what a deploy does.
 
 ## Tests that need a real thing
 
-None. Every test runs against miniflare's bindings with `fetch` stubbed, so no test reaches the
-Cloudflare API, a DNS record or an ntfy server.
+None. Every test under `tests/` runs against miniflare's bindings with `fetch` stubbed, so no test reaches
+the Cloudflare API, a DNS record or an ntfy server. The gate's own tests under `scripts/` start a stand-in,
+itself a Bun process, in place of every program the gate starts.

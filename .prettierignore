@@ -1,8 +1,7 @@
-# The one ignore file every Prettier run names with --ignore-path. Its
-# patterns are the shared ones scripts/startup.ts lists and this repository's
-# own in scripts/expected.ts, so a pattern added here is a gate change. Each
-# is anchored at the root, so a file of the same name deeper in the tree is
-# formatted.
+# The one ignore file every Prettier run names with --ignore-path. The
+# format:check row reads this committed file to decide which files it checks.
+# Each pattern is anchored at the root, so a file of the same name deeper in
+# the tree is formatted.
 #
 # Written by release-please on every release. Its bullets are `*` and its
 # version headers carry a blank line prettier would collapse, so formatting it
@@ -12,11 +11,21 @@
 /.release-please-manifest.json
 
 # Directories a checkout fills locally, which `bun run format` walks into,
-# since --ignore-path keeps .gitignore from narrowing Prettier: Claude Code's
-# worktrees, each a whole checkout of its own, and test and build output.
-.claude/worktrees/
-/coverage/
+# since --ignore-path keeps .gitignore from narrowing Prettier: build and test
+# output, and Claude Code's worktrees, each a whole checkout of its own. The
+# gate refuses a file tracked under any of them.
 /dist/
+/coverage/
+/.claude/worktrees/
+
+# A contributor's own files, which .gitignore lists and `bun run format` would
+# otherwise rewrite: lefthook's local configs and Claude Code's local settings.
+# The gate refuses to track each of these names, and any path below one.
+/lefthook-local
+/lefthook-local.*
+/.lefthook-local
+/.lefthook-local.*
+/.claude/settings.local.json
 
 # This repository's own: the types file wrangler types generates, and the
 # state directory wrangler dev and the test pool fill locally.
