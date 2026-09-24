@@ -10,7 +10,8 @@
  * answers as it would from the contributor's shell, and the gate hands that
  * answer to zizmor alone. A locked mise install makes no api.github.com
  * request, so no row has a use for mise's. CI's gate step carries none of
- * them, so there zizmor runs offline.
+ * them, so there zizmor runs offline. This module imports run.ts alone, so it
+ * loads before the gate's preflight like every module check.ts imports.
  */
 
 import { run } from './run';
@@ -57,6 +58,11 @@ export const GH_ENVIRONMENT: Readonly<Record<string, string | undefined>> = take
  * A gh that is missing, fails, prints nothing or outlives `timeoutMs` reads as
  * no token.
  *
+ * @remarks
+ * No token means zizmor runs offline, so a gh that hangs waiting on its
+ * keyring costs the row its online audits and nothing else. Bun kills gh at
+ * the deadline, and a killed gh exits non-zero.
+ *
  * @param gh - The gh to ask, found as run() finds any program. The gate passes
  * `gh`. A test passes the path of a stand-in, so it can never reach a real gh
  * @param environment - gh's own token names, handed to gh alone
@@ -67,7 +73,7 @@ export async function githubToken(
   environment: Readonly<Record<string, string | undefined>> = GH_ENVIRONMENT,
   timeoutMs: number = GH_TIMEOUT_MS,
 ): Promise<string | undefined> {
-  const printed = await run([gh, 'auth', 'token'], timeoutMs, environment);
+  const printed = await run([gh, 'auth', 'token'], environment, { timeoutMs });
   const found = printed.stdout.trim();
   return printed.exitCode === 0 && found.length > 0 ? found : undefined;
 }

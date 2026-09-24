@@ -1,14 +1,17 @@
 # Git hooks, installed by `lefthook install`, which the package.json prepare
 # script runs on every `bun install`.
 #
-# Every job resolves its tool with `bunx --bun --no-install`, which fetches
-# nothing at commit time. When the checkout's package is installed, it always
-# runs, at the version bun.lock pins. When it is missing, bunx runs a tool of
-# the same name from PATH, from a parent directory's node_modules/.bin or from
-# its own cache under the temporary directory, and exits 1 only when none
-# exists. CI's gate job, which installs from the lockfile, is the control for
-# that case. --bun runs the tool under Bun. Without it, bunx runs a bin whose
-# first line names node under the `node` on PATH.
+# Every job starts its tool as `bun ./node_modules/<package>/<bin>`, so the
+# tool runs under Bun, never under a `node` on PATH, and the version that runs
+# is the one bun.lock pins. A job whose package is missing exits 1 with
+# "Module not found", a refusal, where bunx would run a copy from PATH, a
+# parent directory or its own cache. The `./` stays: Bun runs a package.json
+# script named like a bare relative path that is missing. --no-env-file keeps
+# Bun from loading an env file on disk into the tool. The loop ahead of each
+# Bun unsets BUN_OPTIONS, BUN_INSPECT, BUN_INSPECT_CONNECT_TO and
+# BUN_INSPECT_PRELOAD in every spelling, since Bun on Windows reads each in any
+# case and they hand it an --env-file or a preload ahead of its own arguments.
+# BUN_INSPECT_PRELOAD cannot be emptied instead: Bun exits 1 on an empty value.
 # When node_modules is gone, lefthook itself is missing and the commit goes
 # through. CONTRIBUTING.md#setup says what holds that case.
 
@@ -18,18 +21,18 @@ pre-commit:
     # their changes. Each job sees the staged files its glob matches alone, so
     # a commit that touches none of them skips it.
     - name: eslint
-      glob: '*.{ts,mts,js}'
+      glob: '*.{ts,mts,cts,js,mjs,cjs}'
       # --config names the one config, so no eslint.config.* nearer a staged file
       # runs. --no-warn-ignored: a staged file the config's ignores name, such as
       # a generated one, passes rather than warning past --max-warnings=0.
-      run: bunx --bun --no-install eslint --config eslint.config.ts --fix --max-warnings=0 --no-warn-ignored {staged_files}
+      run: for name in $(env | cut -d= -f1 | grep -ixE 'bun_options|bun_inspect|bun_inspect_connect_to|bun_inspect_preload'); do unset "$name"; done; bun --no-env-file ./node_modules/eslint/bin/eslint.js --config eslint.config.ts --fix --max-warnings=0 --no-warn-ignored {staged_files}
       stage_fixed: true
     # --config names the one config, so no other Prettier config file loads,
     # and --no-editorconfig keeps any .editorconfig from setting an option.
     # --ignore-path names .prettierignore alone, so .gitignore never skips a
     # staged file.
     - name: prettier
-      run: bunx --bun --no-install prettier --config .prettierrc --no-editorconfig --ignore-path .prettierignore --write --ignore-unknown {staged_files}
+      run: for name in $(env | cut -d= -f1 | grep -ixE 'bun_options|bun_inspect|bun_inspect_connect_to|bun_inspect_preload'); do unset "$name"; done; bun --no-env-file ./node_modules/prettier/bin/prettier.cjs --config .prettierrc --no-editorconfig --ignore-path .prettierignore --write --ignore-unknown {staged_files}
       stage_fixed: true
 
 commit-msg:
@@ -39,7 +42,7 @@ commit-msg:
     # .github/commit-scopes.json, both by way of commitlint.config.js, which
     # --config names, so commitlint searches for no other config.
     - name: commitlint
-      run: bunx --bun --no-install commitlint --config commitlint.config.js --edit {1}
+      run: for name in $(env | cut -d= -f1 | grep -ixE 'bun_options|bun_inspect|bun_inspect_connect_to|bun_inspect_preload'); do unset "$name"; done; bun --no-env-file ./node_modules/@commitlint/cli/cli.js --config commitlint.config.js --edit {1}
 
 pre-push:
   jobs:
@@ -48,4 +51,4 @@ pre-push:
     # result. It runs by its file, not through bun run, so no node_modules/.bin
     # sits ahead of PATH before the gate refuses a tracked node_modules path.
     - name: check
-      run: bun scripts/check.ts --quick
+      run: for name in $(env | cut -d= -f1 | grep -ixE 'bun_options|bun_inspect|bun_inspect_connect_to|bun_inspect_preload'); do unset "$name"; done; bun --no-env-file scripts/check.ts --quick

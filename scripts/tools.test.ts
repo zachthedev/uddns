@@ -227,6 +227,24 @@ async function findings(): Promise<string[]> {
   }
 }
 
+/**
+ * The preflight's findings for the working directory, where the root's
+ * program names are refused. The preflight reads the gate's own `scripts`
+ * directory, so the case gets an empty one. A throw comes back as a finding
+ * naming it, so a case that throws fails on its assertion.
+ */
+async function preflightFindings(): Promise<string[]> {
+  mkdirSync('scripts', { recursive: true });
+  try {
+    return await startupFindings();
+  } catch (error: unknown) {
+    return [`threw: ${String(error)}`];
+  }
+}
+
+/** The fragment every program-name finding carries. */
+const PROGRAM_NAMED = 'is named like a program the gate';
+
 /** An asymmetric matcher for a finding carrying `fragment`. */
 function carrying(fragment: string): string {
   return expect.stringContaining(fragment) as string;
@@ -297,28 +315,20 @@ const REFUSED_PROGRAM: readonly string[] = [
   'gh.tar.gz',
   'bun.lockb',
   'mise.toml.bak',
+  'node',
+  'node.exe',
+  'bunx',
+  'bunx.cmd',
 ];
 
-/**
- * The preflight's findings for the working directory that name a root file
- * as a program. scripts/ is planted, since the preflight walks it.
- */
-async function programFindings(): Promise<string[]> {
-  plantEntry('scripts/');
-  try {
-    return (await startupFindings()).filter((finding) => finding.includes('is named like a program'));
-  } catch (error: unknown) {
-    return [`threw: ${String(error)}`];
-  }
-}
-
-test.each([...REFUSED_PROGRAM])('%p is refused as a program name', async (entry: string) => {
+test.each([...REFUSED_PROGRAM])('%p is refused as a program name before any row', async (entry: string) => {
   writeFiles();
   plantEntry(entry);
 
-  expect(await programFindings()).toEqual([
-    carrying(`${quoted(entry)} is named like a program the gate, its hooks or an install start`),
-  ]);
+  expect(await preflightFindings()).toEqual(
+    expect.arrayContaining([carrying(`${quoted(entry)} ${PROGRAM_NAMED}`)]) as string[],
+  );
+  expect(await findings()).toEqual([]);
 });
 
 const ALLOWED: readonly string[] = [
@@ -331,15 +341,14 @@ const ALLOWED: readonly string[] = [
   '.github/',
   'node_modules/',
   'gh/',
-  '.config/other.toml',
 ];
 
-test.each([...ALLOWED])('%p is allowed', async (entry: string) => {
+test.each([...ALLOWED])('%p is refused neither as a mise file nor as a program name', async (entry: string) => {
   writeFiles();
   plantEntry(entry);
 
   expect(await findings()).toEqual([]);
-  expect(await programFindings()).toEqual([]);
+  expect((await preflightFindings()).filter((finding) => finding.includes(PROGRAM_NAMED))).toEqual([]);
 });
 
 test.each([PINS, LOCK])('the pinned file %p is allowed spelled in upper case', async (name: string) => {
@@ -365,7 +374,7 @@ test("every entry at this repository's root, mirrored empty, yields no finding",
   }
 
   expect(await findings()).toEqual([]);
-  expect(await programFindings()).toEqual([]);
+  expect((await preflightFindings()).filter((finding) => finding.includes(PROGRAM_NAMED))).toEqual([]);
 });
 
 test('a .config that is a file rather than a directory yields no finding', async () => {
@@ -373,6 +382,26 @@ test('a .config that is a file rather than a directory yields no finding', async
   plantEntry('.config');
 
   expect(await findings()).toEqual([]);
+});
+
+test.each(['.config/', '.config/other.toml', '.CONFIG/', '.Config'])(
+  'a root .config planted as %p is refused before any row',
+  async (entry: string) => {
+    writeFiles();
+    plantEntry(entry);
+    const name = entry.split('/')[0] ?? entry;
+
+    expect(await preflightFindings()).toEqual(
+      expect.arrayContaining([carrying(`${quoted(name)} is at the root, and mise, lefthook`)]) as string[],
+    );
+  },
+);
+
+test('a .config below the root is not refused as the root one', async () => {
+  writeFiles();
+  plantEntry('docs/.config/other.toml');
+
+  expect((await preflightFindings()).filter((finding) => finding.includes('is at the root'))).toEqual([]);
 });
 
 /** Links `link`, below the working directory, to a directory outside it. */
@@ -419,6 +448,515 @@ test.each(['', LOCK, PINS])('a missing file is a finding naming it (%p present a
     .filter((file) => file !== present)
     .map((file) => carrying(`${file} is missing from the root`));
   expect(await findings()).toEqual(expected);
+});
+
+/* ///// bunfig.toml ///// */
+
+interface BunfigCase {
+  readonly label: string;
+  readonly text: string;
+  /** A fragment of each finding against the file, in order, or none when it passes. */
+  readonly refused: readonly string[];
+}
+
+const BUNFIG_CASES: readonly BunfigCase[] = [
+  { label: 'the cooldown alone', text: '[install]\nminimumReleaseAge = 259200\n', refused: [] },
+  { label: 'a shorter cooldown, since no value is held', text: '[install]\nminimumReleaseAge = 3600\n', refused: [] },
+  {
+    label: 'a top-level preload',
+    text: 'preload = ["./x.ts"]\n\n[install]\nminimumReleaseAge = 259200\n',
+    refused: ['bunfig.toml carries "preload"'],
+  },
+  { label: 'a [test] preload', text: '[test]\npreload = ["./x.ts"]\n', refused: ['bunfig.toml carries "test"'] },
+  { label: 'a [define] table', text: '[define]\nX = "1"\n', refused: ['bunfig.toml carries "define"'] },
+  {
+    label: 'an install cache dir',
+    text: '[install]\nminimumReleaseAge = 259200\n\n[install.cache]\ndir = "./planted"\n',
+    refused: ['bunfig.toml [install] carries "cache"'],
+  },
+  {
+    label: 'an install registry',
+    text: '[install]\nregistry = "https://registry.invalid/"\n',
+    refused: ['bunfig.toml [install] carries "registry"'],
+  },
+  { label: 'install as a value', text: 'install = 1\n', refused: ['bunfig.toml carries install as'] },
+];
+
+test.each([...BUNFIG_CASES])('bunfig.toml with $label', async ({ text, refused }: BunfigCase) => {
+  writeFileSync('bunfig.toml', text);
+
+  const found = (await preflightFindings()).filter((finding) => finding.startsWith('bunfig.toml'));
+
+  expect(found).toEqual(refused.map((fragment) => carrying(fragment)));
+});
+
+test('a missing bunfig.toml yields no finding against it', async () => {
+  const found = (await preflightFindings()).filter((finding) => finding.startsWith('bunfig.toml'));
+
+  expect(found).toEqual([]);
+});
+
+/* ///// .prettierrc ///// */
+
+interface PrettierrcCase {
+  readonly label: string;
+  /** The file's text, or undefined for no file. */
+  readonly text: string | undefined;
+  /** A fragment of each finding against the file, in order, or none when it passes. */
+  readonly refused: readonly string[];
+}
+
+/** A backslash, spelled so no formatter decodes the escape it starts. */
+const BACKSLASH = String.fromCharCode(92);
+
+const PLUGINS_REFUSED = 'and Prettier imports each plugin it names, a package or a local path, and runs it';
+
+const PRETTIERRC_CASES: readonly PrettierrcCase[] = [
+  { label: 'the committed options', text: '{ "singleQuote": true, "printWidth": 120 }\n', refused: [] },
+  {
+    label: 'an override setting an option',
+    text: '{ "overrides": [{ "files": "*.md", "options": { "proseWrap": "always" } }] }\n',
+    refused: [],
+  },
+  { label: 'no file', text: undefined, refused: [] },
+  {
+    label: 'Plugins in another case, which Prettier ignores as an unknown option',
+    text: '{ "Plugins": ["./plugin.mjs"] }\n',
+    refused: [],
+  },
+  {
+    label: 'plugins at the top',
+    text: '{ "plugins": ["./plugin.mjs"] }\n',
+    refused: [`.prettierrc carries "plugins", ${PLUGINS_REFUSED}`],
+  },
+  {
+    label: "plugins in an override's options",
+    text: '{ "overrides": [{ "files": "*.ts", "options": { "plugins": ["prettier-plugin-x"] } }] }\n',
+    refused: [`.prettierrc carries "overrides[0].options.plugins", ${PLUGINS_REFUSED}`],
+  },
+  {
+    label: 'plugins at the top and in two overrides',
+    text: '{ "plugins": [], "overrides": [{ "files": "*.md", "options": {} }, { "files": "*.ts", "options": { "plugins": ["x"] } }, { "files": "*.css", "options": { "plugins": ["y"] } }] }\n',
+    refused: [
+      '.prettierrc carries "plugins"',
+      '.prettierrc carries "overrides[1].options.plugins"',
+      '.prettierrc carries "overrides[2].options.plugins"',
+    ],
+  },
+  {
+    label: 'plugins spelled with a JSON escape',
+    text: `{ "plugin${BACKSLASH}u0073": ["./plugin.mjs"] }\n`,
+    refused: ['.prettierrc carries "plugins"'],
+  },
+  {
+    label: 'plugins under a __proto__ key',
+    text: '{ "__proto__": { "plugins": ["./plugin.mjs"] } }\n',
+    refused: ['.prettierrc carries "__proto__.plugins"'],
+  },
+  {
+    label: 'a string naming a shared config module',
+    text: '"./shared.cjs"\n',
+    refused: [
+      '.prettierrc holds "./shared.cjs", and it is an object of formatting options. Prettier imports a shared config module',
+    ],
+  },
+  { label: 'a list', text: '["./plugin.mjs"]\n', refused: ['.prettierrc holds '] },
+  {
+    label: 'YAML, which Prettier reads',
+    text: 'plugins:\n  - ./plugin.mjs\n',
+    refused: ['.prettierrc does not parse as plain JSON, so whether Prettier loads code through it is unknown'],
+  },
+  {
+    label: 'a repeated key',
+    text: '{ "singleQuote": true, "singleQuote": false }\n',
+    refused: ['.prettierrc does not parse as plain JSON'],
+  },
+];
+
+test.each([...PRETTIERRC_CASES])('.prettierrc with $label', async ({ text, refused }: PrettierrcCase) => {
+  if (text !== undefined) {
+    writeFileSync('.prettierrc', text);
+  }
+
+  const found = (await preflightFindings()).filter((finding) => finding.startsWith('.prettierrc'));
+
+  expect(found).toEqual(refused.map((fragment) => carrying(fragment)));
+});
+
+/* ///// The packages node_modules must hold ///// */
+
+/** One bun.lock `packages` entry: its key, the `os`, `cpu` and `libc` it names, and its edges, if any. */
+interface LockEntry {
+  readonly key: string;
+  readonly os?: unknown;
+  readonly cpu?: unknown;
+  readonly libc?: unknown;
+  readonly dependencies?: Readonly<Record<string, string>>;
+  readonly optionalDependencies?: Readonly<Record<string, string>>;
+  readonly peerDependencies?: Readonly<Record<string, string>>;
+  readonly optionalPeers?: readonly string[];
+}
+
+/**
+ * Writes a package.json naming `names` as devDependencies, a bun.lock whose
+ * `packages` holds each name and each of `locked`, and a package.json under
+ * node_modules for each path of `present`, given as a bun.lock key. A locked
+ * entry whose key is also a name replaces the name's bare entry.
+ */
+function installed(names: readonly string[], present: readonly string[], locked: readonly LockEntry[] = []): void {
+  writeFileSync(
+    'package.json',
+    JSON.stringify({ devDependencies: Object.fromEntries(names.map((name) => [name, '1.0.0'])) }),
+  );
+  const packages = Object.fromEntries(
+    [...names.map((key) => ({ key })), ...locked].map(({ key, ...meta }) => [
+      key,
+      [`${key.split('/').at(-1) ?? key}@1.0.0`, '', meta, 'sha512-x'],
+    ]),
+  );
+  // bun.lock is JSON with trailing commas, which the gate reads as Bun does.
+  writeFileSync('bun.lock', `{\n  "lockfileVersion": 1,\n  "packages": ${JSON.stringify(packages)},\n}\n`);
+  for (const key of present) {
+    // A scope's part and the name after it share one node_modules directory.
+    const path = join(
+      ...key
+        .split('/')
+        .flatMap((part, index, parts) =>
+          parts[index - 1]?.startsWith('@') === true ? [part] : ['node_modules', part],
+        ),
+    );
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'package.json'), JSON.stringify({ name: key, version: '1.0.0' }));
+  }
+}
+
+/** The preflight's findings about node_modules. */
+async function installFindings(): Promise<string[]> {
+  return (await preflightFindings()).filter((finding) => finding.includes('node_modules'));
+}
+
+/** The platform names this machine does not run, for an entry bun install skips here. */
+const OTHER_OS = process.platform === 'linux' ? 'darwin' : 'linux';
+const OTHER_CPU = process.arch === 'x64' ? 'arm64' : 'x64';
+
+test('a manifest and lockfile whose every package node_modules holds yield no finding about node_modules', async () => {
+  writeFiles();
+  installed(
+    ['prettier', '@scope/tool'],
+    ['prettier', '@scope/tool', 'prettier/inner', '@scope/tool/@scope/inner'],
+    [
+      { key: 'prettier', dependencies: { inner: '1.0.0' } },
+      { key: '@scope/tool', dependencies: { '@scope/inner': '1.0.0' } },
+      { key: 'prettier/inner' },
+      { key: '@scope/tool/@scope/inner' },
+    ],
+  );
+
+  expect(await installFindings()).toEqual([]);
+});
+
+test('a package the manifest names that node_modules lacks is refused before any row, naming it alone', async () => {
+  writeFiles();
+  installed(['prettier', 'zod', '@scope/tool'], ['zod']);
+
+  expect(await installFindings()).toEqual([
+    carrying('"node_modules/prettier", "node_modules/@scope/tool" are missing, where bun install puts them'),
+  ]);
+});
+
+test('a nested and a scoped nested package bun.lock installs that node_modules lacks are refused at their paths', async () => {
+  writeFiles();
+  installed(
+    ['eslint', '@scope/tool'],
+    ['eslint', '@scope/tool'],
+    [
+      { key: 'eslint', dependencies: { ignore: '1.0.0' } },
+      { key: '@scope/tool', dependencies: { '@scope/inner': '1.0.0' } },
+      { key: 'eslint/ignore' },
+      { key: '@scope/tool/@scope/inner' },
+    ],
+  );
+
+  expect(await installFindings()).toEqual([
+    carrying(
+      '"node_modules/eslint/node_modules/ignore", "node_modules/@scope/tool/node_modules/@scope/inner" are missing',
+    ),
+  ]);
+});
+
+/** The platform packages the case below reaches, each an optional dependency of one root package. */
+const NATIVE_KEYS: readonly string[] = [
+  'native-here',
+  'native-listed',
+  'native-other-os',
+  'native-other-cpu',
+  'native-none',
+  'native-excluded',
+  'native-libc',
+];
+
+test('a platform package for this platform that node_modules lacks is refused, and one for another is not', async () => {
+  writeFiles();
+  installed(
+    ['tool'],
+    ['tool'],
+    [
+      { key: 'tool', optionalDependencies: Object.fromEntries(NATIVE_KEYS.map((key) => [key, '1.0.0'])) },
+      { key: 'native-here', os: process.platform, cpu: process.arch },
+      { key: 'native-listed', os: [OTHER_OS, process.platform], cpu: [process.arch] },
+      { key: 'native-other-os', os: OTHER_OS, cpu: process.arch },
+      { key: 'native-other-cpu', os: process.platform, cpu: OTHER_CPU },
+      { key: 'native-none', os: 'none', cpu: process.arch },
+      { key: 'native-excluded', os: [`!${process.platform}`], cpu: process.arch },
+      { key: 'native-libc', os: process.platform, cpu: process.arch, libc: 'glibc' },
+    ],
+  );
+
+  expect(await installFindings()).toEqual([
+    carrying('"node_modules/native-here", "node_modules/native-listed" are missing'),
+  ]);
+});
+
+/** A bun.lock shape, what node_modules holds, and the packages the preflight names missing. */
+interface ReachCase {
+  readonly label: string;
+  readonly names: readonly string[];
+  readonly locked: readonly LockEntry[];
+  readonly present: readonly string[];
+  /** The bun.lock keys the preflight names missing, in any order, or none when it must pass. */
+  readonly missing: readonly string[];
+}
+
+const HERE = { os: process.platform, cpu: process.arch } as const;
+
+const REACH_CASES: readonly ReachCase[] = [
+  {
+    label: 'an optional parent whose os leaves this platform out, with what it alone reaches',
+    names: ['tool'],
+    locked: [
+      { key: 'tool', optionalDependencies: { 'tool-other-os': '1.0.0', 'tool-here': '1.0.0' } },
+      { key: 'tool-other-os', os: OTHER_OS, dependencies: { wasm: '1.0.0' } },
+      { key: 'wasm', dependencies: { runtime: '1.0.0' } },
+      { key: 'runtime' },
+      { key: 'tool-here', os: process.platform },
+    ],
+    present: ['tool'],
+    missing: ['tool-here'],
+  },
+  {
+    label: 'an optional parent whose cpu is none, with what it alone reaches',
+    names: ['tool'],
+    locked: [
+      { key: 'tool', optionalDependencies: { 'tool-none': '1.0.0' } },
+      { key: 'tool-none', cpu: 'none', dependencies: { wasm: '1.0.0' } },
+      { key: 'wasm' },
+    ],
+    present: ['tool'],
+    missing: [],
+  },
+  {
+    label: "sharp's shape, one chain below two parents that each leave this platform out",
+    names: ['miniflare'],
+    locked: [
+      { key: 'miniflare', dependencies: { sharp: '1.0.0' } },
+      {
+        key: 'sharp',
+        optionalDependencies: {
+          '@img/sharp-other-wasm32': '1.0.0',
+          '@img/sharp-webcontainers-wasm32': '1.0.0',
+          '@img/sharp-here': '1.0.0',
+        },
+      },
+      { key: '@img/sharp-other-wasm32', os: OTHER_OS, dependencies: { '@img/sharp-wasm32': '1.0.0' } },
+      { key: '@img/sharp-webcontainers-wasm32', cpu: 'none', dependencies: { '@img/sharp-wasm32': '1.0.0' } },
+      { key: '@img/sharp-wasm32', dependencies: { '@emnapi/runtime': '1.0.0' } },
+      { key: '@emnapi/runtime', dependencies: { tslib: '1.0.0' } },
+      { key: 'tslib' },
+      { key: '@img/sharp-here', ...HERE },
+    ],
+    present: ['miniflare', 'sharp', '@img/sharp-here'],
+    missing: [],
+  },
+  {
+    label: 'a dependency shared by a parent this platform leaves out and one it keeps',
+    names: ['tool'],
+    locked: [
+      { key: 'tool', optionalDependencies: { 'parent-other': '1.0.0', 'parent-here': '1.0.0' } },
+      { key: 'parent-other', os: OTHER_OS, dependencies: { shared: '1.0.0' } },
+      { key: 'parent-here', os: process.platform, dependencies: { shared: '1.0.0' } },
+      { key: 'shared' },
+    ],
+    present: ['tool', 'parent-here'],
+    missing: ['shared'],
+  },
+  {
+    label: 'a nested key, which resolves ahead of the hoisted one',
+    names: ['eslint'],
+    locked: [{ key: 'eslint', dependencies: { ignore: '1.0.0' } }, { key: 'eslint/ignore' }, { key: 'ignore' }],
+    present: ['eslint'],
+    missing: ['eslint/ignore'],
+  },
+  {
+    label: 'a dependency resolved from the nearest package above it, then hoisted',
+    names: ['@scope/tool'],
+    locked: [
+      { key: '@scope/tool', dependencies: { '@scope/inner': '1.0.0' } },
+      { key: '@scope/tool/@scope/inner', dependencies: { '@scope/near': '1.0.0', leaf: '1.0.0' } },
+      { key: '@scope/tool/@scope/near' },
+      { key: '@scope/near' },
+      { key: 'leaf' },
+    ],
+    present: ['@scope/tool'],
+    missing: ['@scope/tool/@scope/inner', '@scope/tool/@scope/near', 'leaf'],
+  },
+  {
+    label: 'a platform package no manifest names, reached through the package that names it',
+    names: ['@typescript/native'],
+    locked: [
+      {
+        key: '@typescript/native',
+        optionalDependencies: { '@typescript/typescript-here': '1.0.0', '@typescript/typescript-other': '1.0.0' },
+      },
+      { key: '@typescript/typescript-here', ...HERE },
+      { key: '@typescript/typescript-other', os: OTHER_OS, cpu: process.arch },
+    ],
+    present: ['@typescript/native'],
+    missing: ['@typescript/typescript-here'],
+  },
+  {
+    label: 'a peer dependency, and an optional peer that is not required',
+    names: ['plugin'],
+    locked: [
+      { key: 'plugin', peerDependencies: { host: '1.0.0', extra: '1.0.0' }, optionalPeers: ['extra'] },
+      { key: 'host' },
+      { key: 'extra' },
+    ],
+    present: ['plugin'],
+    missing: ['host'],
+  },
+  {
+    label: 'a root name whose os leaves this platform out, with what it reaches',
+    names: ['native-other'],
+    locked: [{ key: 'native-other', os: OTHER_OS, dependencies: { helper: '1.0.0' } }, { key: 'helper' }],
+    present: [],
+    missing: [],
+  },
+  {
+    label: 'an entry naming a libc, with what it alone reaches',
+    names: ['tool'],
+    locked: [
+      { key: 'tool', optionalDependencies: { 'native-libc': '1.0.0' } },
+      { key: 'native-libc', ...HERE, libc: 'glibc', dependencies: { 'libc-helper': '1.0.0' } },
+      { key: 'libc-helper' },
+    ],
+    present: ['tool'],
+    missing: [],
+  },
+  {
+    label: 'an entry nothing reaches, and a cycle',
+    names: ['a'],
+    locked: [{ key: 'a', dependencies: { b: '1.0.0' } }, { key: 'b', dependencies: { a: '1.0.0' } }, { key: 'orphan' }],
+    present: ['a'],
+    missing: ['b'],
+  },
+];
+
+/** The bun.lock keys the preflight's missing-package finding names, sorted. */
+function missingKeys(found: readonly string[]): string[] {
+  return found
+    .filter((finding) => finding.includes(' missing, where bun install puts '))
+    .flatMap((finding) => [...finding.matchAll(/"node_modules\/([^"]*)"/g)].map((match) => match[1] ?? ''))
+    .map((path) => path.replaceAll('/node_modules/', '/'))
+    .sort();
+}
+
+test.each([...REACH_CASES])(
+  'the preflight requires what bun install puts under node_modules: $label',
+  async ({ names, locked, present, missing }: ReachCase) => {
+    writeFiles();
+    installed(names, present, locked);
+
+    const found = await installFindings();
+
+    expect(found).toEqual(missing.length === 0 ? [] : [carrying(' missing, where bun install puts ')]);
+    expect(missingKeys(found)).toEqual([...missing].sort());
+  },
+);
+
+test('more than five missing packages are one finding naming five and counting the rest', async () => {
+  writeFiles();
+  installed(['a', 'b', 'c', 'd', 'e', 'f', 'g'], []);
+
+  expect(await installFindings()).toEqual([
+    carrying(
+      '"node_modules/a", "node_modules/b", "node_modules/c", "node_modules/d", "node_modules/e" and 2 more are missing',
+    ),
+  ]);
+});
+
+test('a node_modules that is gone refuses every package the manifest names', async () => {
+  writeFiles();
+  installed(['prettier', 'zod'], []);
+
+  expect(await installFindings()).toEqual([carrying('"node_modules/prettier", "node_modules/zod" are missing')]);
+});
+
+test('a package linked out of the checkout is refused, a nested one included', async () => {
+  writeFiles();
+  installed(
+    ['prettier', 'eslint'],
+    ['eslint'],
+    [{ key: 'eslint', dependencies: { ignore: '1.0.0' } }, { key: 'eslint/ignore' }],
+  );
+  mkdirSync(join('node_modules', 'eslint', 'node_modules'), { recursive: true });
+  for (const link of [join('node_modules', 'prettier'), join('node_modules', 'eslint', 'node_modules', 'ignore')]) {
+    linkOut(link);
+    writeFileSync(join(outside.at(-1) ?? '', 'package.json'), '{ "name": "x" }');
+  }
+
+  expect(await installFindings()).toEqual([
+    carrying('"node_modules/prettier" leads out of the checkout'),
+    carrying('"node_modules/eslint/node_modules/ignore" leads out of the checkout'),
+  ]);
+});
+
+test('a missing package.json is refused, since which packages node_modules must hold is unknown', async () => {
+  writeFiles();
+
+  expect(await preflightFindings()).toEqual(
+    expect.arrayContaining([carrying('package.json does not parse as the gate reads it')]) as string[],
+  );
+});
+
+test('a missing bun.lock is refused, since where bun install puts each package is unknown', async () => {
+  writeFiles();
+  installed(['prettier'], ['prettier']);
+  rmSync('bun.lock');
+
+  expect(await installFindings()).toEqual([carrying('bun.lock does not parse as the gate reads it')]);
+});
+
+/* ///// The stand-in's path ///// */
+
+test.each(["'", "'/"])(
+  'a root entry named a single quote, planted as %p, is refused before any row',
+  async (entry: string) => {
+    writeFiles();
+    plantEntry(entry);
+
+    expect(await preflightFindings()).toEqual(
+      expect.arrayContaining([
+        carrying(`"'" is at the root, and actionlint reads the ShellCheck stand-in's`),
+      ]) as string[],
+    );
+  },
+);
+
+test('a single quote below the root is not refused as the root one', async () => {
+  writeFiles();
+  plantEntry("docs/'/notes.md");
+
+  expect((await preflightFindings()).filter((finding) => finding.includes('stand-in'))).toEqual([]);
 });
 
 /* ///// The lockfile rules ///// */
@@ -974,4 +1512,45 @@ test('resolve refuses a binary reporting a version other than its pin', async ()
   );
 
   expect(outcome).toContain(`reports ${PLAIN.key} 0.0.1, and ${PINS} pins ${quoted(pinned(PLAIN))}`);
+});
+
+test('resolve reports a mise which that fails by its exit, and one that names nothing as missing', async () => {
+  writeFiles();
+  answerTools(pinned);
+  standIns.answer('mise', { stdout: 'mise crashed\n', exitCode: 2 }, `which ${PLAIN.binary}`);
+
+  const failed = await resolve().then(
+    () => 'resolved',
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  );
+  standIns.answer('mise', { stdout: '\n' }, `which ${PLAIN.binary}`);
+  const empty = await resolve().then(
+    () => 'resolved',
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  );
+
+  expect(failed).toContain(`mise which ${PLAIN.binary} exited 2 saying: mise crashed`);
+  expect(failed).not.toContain('found nothing');
+  expect(empty).toContain(`mise which ${PLAIN.binary} found nothing`);
+});
+
+test('resolve reports a version flag that fails by its exit, not as a version mismatch', async () => {
+  writeFiles();
+  answerTools(pinned);
+  standIns.answer(PLAIN.binary, { stdout: `${PLAIN.binary} ${pinned(PLAIN)}\n`, exitCode: 3 });
+
+  const outcome = await resolve().then(
+    () => 'resolved',
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  );
+
+  expect(outcome).toContain(`${PLAIN.versionFlag} exited 3 saying:`);
+  expect(outcome).not.toContain('Install it with');
+});
+
+test('resolve reads a version printed in color', async () => {
+  writeFiles();
+  answerTools((tool: Tool) => `${String.fromCharCode(0x1b)}[1m${pinned(tool)}${String.fromCharCode(0x1b)}[0m`);
+
+  expect((await resolve()).size).toBe(TOOLS.length);
 });

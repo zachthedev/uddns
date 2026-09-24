@@ -50,13 +50,16 @@ function step(list: readonly Table[], name: string): Table {
 // there would run in place of the gate. The call sites that decide a merge
 // start the file with a bare bun.
 test("CI's gate job starts the gate file itself, not through the script runner", () => {
-  expect(step(steps('.github/workflows/ci.yml', 'gate'), 'Verify')['run']).toBe('bun scripts/check.ts');
+  expect(step(steps('.github/workflows/ci.yml', 'gate'), 'Verify')['run']).toBe('bun --no-env-file scripts/check.ts');
 });
 
 test('the push hook starts the gate file itself, in its quick form', () => {
   const jobs = tables(table(yaml('lefthook.yml')['pre-push'], 'pre-push')['jobs'], 'pre-push jobs');
 
-  expect(step(jobs, 'check')['run']).toBe('bun scripts/check.ts --quick');
+  // The loop ahead of it unsets the variables every Bun reads before its own arguments.
+  expect(step(jobs, 'check')['run']).toBe(
+    `for name in $(env | cut -d= -f1 | grep -ixE 'bun_options|bun_inspect|bun_inspect_connect_to|bun_inspect_preload'); do unset "$name"; done; bun --no-env-file scripts/check.ts --quick`,
+  );
 });
 
 // mise-action runs mise in a workspace it trusts, so a pull request's
@@ -97,9 +100,9 @@ test('the package scripts a contributor runs start the gate file', () => {
   const scripts = table(manifest['scripts'], 'package.json scripts');
 
   expect([scripts['check'], scripts['check:quick'], scripts['check:rows']]).toEqual([
-    'bun scripts/check.ts',
-    'bun scripts/check.ts --quick',
-    'bun scripts/check.ts --rows',
+    'bun --no-env-file scripts/check.ts',
+    'bun --no-env-file scripts/check.ts --quick',
+    'bun --no-env-file scripts/check.ts --rows',
   ]);
 });
 

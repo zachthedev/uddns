@@ -31,9 +31,10 @@ Session rules, each with its reason:
   Either changes what the `cf-typegen:check` row generates, so a green row goes red for a reason the
   tree does not carry.
 - Never carry `BUN_OPTIONS=--preload`, `NODE_OPTIONS=--require` or `JITI_ALIAS` into a gate run. Each
-  runs code inside the tools the gate calls, so a green result under one proves nothing about the tree.
-  The gate documents them rather than refusing them, because the environment that carries them also
-  carries `PATH`.
+  runs code inside the gate or the tools it calls, so a green result under one proves nothing about the
+  tree. The gate clears `BUN_OPTIONS` for every process it starts, after a preload it names has run in the
+  gate itself, and documents the other two rather than refusing them, because the environment that carries
+  them also carries `PATH`.
 
 Tree rules, each held by the gate or review, with the reason in
 [CONTRIBUTING.md#what-never-happens](CONTRIBUTING.md#what-never-happens):

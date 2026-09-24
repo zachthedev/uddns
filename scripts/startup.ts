@@ -1,15 +1,16 @@
 /**
- * The files Bun and the gate's tools read before they run, held against what
- * the gate expects: the tracked files a tool would read in place of the one
- * the gate names, bunfig.toml, what resolves the gate's own imports, the
- * configs and ignore files the rows read, and the root's program names.
+ * The files Bun and the gate's tools read before they run, refused where they
+ * would change what a row checks: a file a tool without a named config would
+ * read, a key in bunfig.toml, package.json or .prettierrc that runs or swaps
+ * code, what resolves the gate's own imports, and the root's program names.
  *
  * @remarks
  * The gate calls {@link trackedFindings} and {@link startupFindings} before
  * any row, so this file and everything it imports read Bun and `node:`
  * built-ins alone. A package imported here would load from node_modules before
- * the check that refuses a planted one. The comparison helpers here serve
- * tools.ts too, which holds mise.toml and mise.lock the same way. What differs
+ * the check that refuses a planted one. No config's text is held here:
+ * code-owner review is the control on a change to one. The comparison helpers
+ * here serve tools.ts too, which holds mise.toml and mise.lock. What differs
  * between repositories of the set lives in expected.ts.
  */
 
@@ -17,12 +18,7 @@ import type { Dirent } from 'node:fs';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import {
-  EXPECTED_ESLINT_CONFIG,
-  EXPECTED_PROJECT_CONFIGS,
-  EXPECTED_ZIZMOR_CONFIG,
-  OWN_PRETTIERIGNORE_PATTERNS,
-} from './expected';
+import { EXPECTED_PROJECT_CONFIGS, EXPECTED_UNTYPED_SOURCES } from './expected';
 import { describe, fold, isProgramName, quote, run } from './run';
 
 /** The file pinning a version for every tool mise installs. */
@@ -45,9 +41,6 @@ export const PRETTIERIGNORE = '.prettierignore';
 
 /** The one ESLint config, which the lint row and the commit hook name with `--config`. */
 export const ESLINT_CONFIG = 'eslint.config.ts';
-
-/** The one commitlint config, which the commit hook and CI's commits job name with `--config`. */
-const COMMITLINT_CONFIG = 'commitlint.config.js';
 
 /** The one taplo config, which the toml row names with `--config`. */
 export const TAPLO_CONFIG = '.taplo.toml';
@@ -175,9 +168,6 @@ function parseJson(text: string): unknown {
 
 /* ///// The tracked files ///// */
 
-/** The deadline for the one git call that lists the tracked files. */
-const GIT_TIMEOUT_MS = 60_000;
-
 /** How many tracked paths under node_modules a finding names before it counts the rest. */
 const NODE_MODULES_SHOWN = 5;
 
@@ -215,19 +205,17 @@ interface ConfigSearch {
 
 /**
  * Every program the gate, its hooks or an install start that reads a file it
- * finds by name, with every name it reads, measured on the pinned versions.
+ * finds by name and takes no flag naming one, with every name it reads,
+ * measured on the pinned versions.
  *
  * @remarks
- * Each program runs with its one file named where it takes a flag for it:
- * Prettier with `--config .prettierrc` and `--no-editorconfig`, ESLint with
- * `--config eslint.config.ts`, commitlint with `--config commitlint.config.js`,
- * taplo with `--config .taplo.toml` and zizmor with `--config
- * .github/zizmor.yml`. Every other name is refused, so a run without the flag,
- * from an editor or by hand, reads the same file. actionlint and lefthook
- * take no config flag here, so their other names are refused alone. The
- * patterns reach past each program's own search where that costs nothing, to
- * any directory and any extension. The root `.config` directory, which mise,
- * lefthook and cosmiconfig read, is refused whole on its own.
+ * Prettier, ESLint, commitlint, taplo and zizmor each run with their one
+ * config named, and the named form stops every other name each reads, so none
+ * is listed here. actionlint, lefthook, bun install and Bun's env loader take
+ * no config flag, so every other name they read is refused. The patterns reach
+ * past each program's own search where that costs nothing, to any directory
+ * and any extension. The root `.config` directory, which mise, lefthook and
+ * cosmiconfig read whatever a flag names, is refused whole on its own.
  */
 const CONFIG_SEARCHES: readonly ConfigSearch[] = [
   {
@@ -241,41 +229,6 @@ const CONFIG_SEARCHES: readonly ConfigSearch[] = [
     paths: ['**/.npmrc'],
     reads: 'bun install fetches from the registry it names',
     personal: true,
-  },
-  {
-    what: 'a package.yaml',
-    paths: ['**/package.yaml'],
-    reads: 'Prettier and commitlint read a config from it, and package.json is the one manifest',
-  },
-  {
-    what: 'a Prettier config',
-    paths: ['**/.prettierrc', '**/.prettierrc.*', '**/prettier.config.*'],
-    named: PRETTIERRC,
-    reads: 'Prettier loads the nearest one for a file when no config is named, running it when it is a module',
-  },
-  {
-    what: 'an ESLint config',
-    paths: ['**/eslint.config.*'],
-    named: ESLINT_CONFIG,
-    reads: 'ESLint runs the nearest one for each file it lints when no config is named',
-  },
-  {
-    what: 'a commitlint config',
-    paths: ['**/.commitlintrc', '**/.commitlintrc.*', '**/commitlint.config.*'],
-    named: COMMITLINT_CONFIG,
-    reads: 'commitlint reads the first of its names it finds when no config is named, running it when it is a module',
-  },
-  {
-    what: 'a taplo config',
-    paths: ['**/.taplo.toml', '**/taplo.toml'],
-    named: TAPLO_CONFIG,
-    reads: 'taplo reads the first it finds from its working directory upward when no config is named',
-  },
-  {
-    what: 'a zizmor config',
-    paths: ['**/zizmor.yml', '**/zizmor.yaml'],
-    named: ZIZMOR_CONFIG,
-    reads: 'zizmor reads one from .github or the root when no config is named, and a rule in it can turn an audit off',
   },
   {
     what: 'an actionlint config',
@@ -294,6 +247,12 @@ const CONFIG_SEARCHES: readonly ConfigSearch[] = [
     reads: 'lefthook merges it over lefthook.yml, where it can replace any hook job. .gitignore lists it',
     personal: true,
   },
+  {
+    what: "Claude Code's local settings",
+    paths: ['.claude/settings.local.json'],
+    reads: "Claude Code reads it as one contributor's own settings. .gitignore lists it",
+    personal: true,
+  },
 ];
 
 /** `glob`, one of a {@link ConfigSearch}'s paths, as a pattern over a whole folded path. */
@@ -307,32 +266,56 @@ function searchPattern(glob: string): RegExp {
 }
 
 /**
- * The keys a program reads its config from in any `package.json`, and the
- * program.
+ * The root paths of every personal file {@link CONFIG_SEARCHES} names, each as
+ * a pattern with the number of segments it spans. .prettierignore skips each
+ * one, and anything below it.
  */
-const PACKAGE_KEYS: readonly (readonly [string, string])[] = [
-  ['prettier', 'Prettier'],
-  ['commitlint', 'commitlint'],
-  ['cosmiconfig', "commitlint's cosmiconfig"],
-];
+const PERSONAL_ROOTS: readonly { readonly pattern: RegExp; readonly depth: number }[] = CONFIG_SEARCHES.filter(
+  (search) => search.personal === true,
+)
+  .flatMap((search) => search.paths)
+  .filter((path) => !path.startsWith('**/'))
+  .map((path) => ({ pattern: searchPattern(path), depth: path.split('/').length }));
 
-/** Every way the tracked `package.json` at `path` carries a program's config, as findings. */
+/**
+ * The folded root path of the {@link PERSONAL_ROOTS} entry that `segments`,
+ * a folded path, sits below, or undefined when it sits below none. A file at
+ * such a path itself is refused as the personal file.
+ */
+function personalRoot(segments: readonly string[]): string | undefined {
+  return PERSONAL_ROOTS.map(({ pattern, depth }) => ({
+    pattern,
+    root: segments.slice(0, depth).join('/'),
+    depth,
+  })).find(({ pattern, root, depth }) => segments.length > depth && pattern.test(root))?.root;
+}
+
+/** Every way the tracked `package.json` at `path` patches a package, as findings. */
 function packageKeyFindings(path: string): string[] {
   let parsed: unknown;
   try {
     parsed = parseJson(readFileSync(path, 'utf8'));
   } catch (error: unknown) {
-    // Unreadable, malformed or read two ways: refused, since what each program reads from it is unknown.
+    // Unreadable, malformed or read two ways: refused, since whether it names a patch is unknown.
     return [
-      `${quote(path)} does not parse as the gate reads it, so the config keys Prettier and commitlint read from it are unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
+      `${quote(path)} does not parse as the gate reads it, so whether it patches a package is unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
     ];
   }
   const manifest = isTable(parsed) ? parsed : {};
-  return PACKAGE_KEYS.filter(([key]) => Object.hasOwn(manifest, key)).map(
-    ([key, program]) =>
-      `${quote(path)} carries a ${key} key, and ${program} reads its config from it. The one config is a file the gate names`,
-  );
+  const found: string[] = [];
+  if (Object.hasOwn(manifest, PATCHES_KEY)) {
+    found.push(
+      `${quote(path)} carries a ${PATCHES_KEY} key, and bun install applies each patch it names over the package bun.lock pins, so a tool a row runs can change while its pin stays the same. Remove it`,
+    );
+  }
+  return found;
 }
+
+/**
+ * The `package.json` key bun install reads patches from. A patch bun.lock
+ * records with no entry here is not applied, so the manifest is the file read.
+ */
+const PATCHES_KEY = 'patchedDependencies';
 
 /** The names Bun and typescript-eslint read a project's TypeScript options from. */
 const PROJECT_CONFIG_NAMES: readonly string[] = ['tsconfig.json', 'jsconfig.json'];
@@ -378,12 +361,12 @@ function extendedConfig(from: string, target: unknown): { readonly file: string 
  *
  * @remarks
  * Bun applies `paths` and `baseUrl` to every import in the directory below the
- * config, node_modules code included, so under `bunx --bun` a bare package
- * name a commit hook's tool imports resolves to repository code. `extends` is
- * one path or a list, and the gate follows every entry. The set's project
- * configs are plain JSON, so a comment is refused with any other text JSON
- * does not parse. A key is compared through {@link fold}, and a file that
- * repeats a key is refused, so no spelling Bun reads differently passes.
+ * config, node_modules code included, so under Bun a bare package name a
+ * commit hook's tool imports resolves to repository code. `extends` is one
+ * path or a list, and the gate follows every entry inside the checkout. The
+ * set's project configs are plain JSON, so a comment is refused with any other
+ * text JSON does not parse. A key is compared through {@link fold}, and a file
+ * that repeats a key is refused, so no spelling Bun reads differently passes.
  */
 function redirectFindings(config: string, file: string, seen: Set<string>): string[] {
   const at = resolve(file);
@@ -417,24 +400,30 @@ function redirectFindings(config: string, file: string, seen: Set<string>): stri
     const extended = parsed['extends'];
     for (const target of Array.isArray(extended) ? extended : [extended]) {
       const next = extendedConfig(at, target);
-      found.push(...('file' in next ? redirectFindings(config, next.file, seen) : [`${shown} ${next.refused}`]));
+      if (!('file' in next)) {
+        found.push(`${shown} ${next.refused}`);
+        continue;
+      }
+      found.push(...redirectFindings(config, next.file, seen));
     }
   }
   return found;
 }
 
 /**
- * Every finding against the project config at `path`: one the gate does not
- * hold is refused, and one it holds is read through its `extends` chain.
+ * Every finding against the project config at `path`: one outside the paths
+ * expected.ts names is refused, and a named one is read through its `extends`
+ * chain.
  *
  * @remarks
- * typescript-eslint reads the project config nearest each file it lints, so
- * one the gate does not hold changes what the lint row reports.
+ * typescript-eslint reads the project config nearest each file it lints, and
+ * no flag names another, so one at an unnamed path changes what the lint row
+ * reports. The rule is where a config sits, never what it holds.
  */
 function projectConfigFindings(path: string): string[] {
-  if (path !== SCRIPTS_TSCONFIG && !Object.hasOwn(EXPECTED_PROJECT_CONFIGS, path)) {
+  if (path !== SCRIPTS_TSCONFIG && !EXPECTED_PROJECT_CONFIGS.includes(path)) {
     return [
-      `${quote(path)} is a TypeScript project config the gate does not hold, and typescript-eslint reads the nearest one for each file it lints while Bun applies its paths and baseUrl to every import below it. Hold it in scripts/expected.ts, or remove it`,
+      `${quote(path)} is a TypeScript project config outside the paths scripts/expected.ts names, and typescript-eslint reads the nearest one for each file it lints while Bun applies its paths and baseUrl to every import below it. Name it in scripts/expected.ts, or remove it`,
     ];
   }
   return redirectFindings(path, path, new Set());
@@ -448,6 +437,20 @@ function projectConfigFindings(path: string): string[] {
  */
 const VCS_DIRECTORIES: readonly string[] = ['.git', '.sl', '.svn', '.hg', '.jj'];
 
+/**
+ * The root directories the lint and format rows skip: ESLint's globalIgnores
+ * and .prettierignore name each. A checkout fills them locally, and a file
+ * force-added there is tracked like any other, which the product can import.
+ */
+const SKIPPED_DIRECTORIES: readonly string[] = ['dist', 'coverage', '.claude/worktrees'];
+
+/**
+ * A JavaScript or declaration file, by the end of its folded name: `.js`,
+ * `.jsx`, `.mjs`, `.cjs`, `.d.ts`, `.d.mts`, `.d.cts`, and a declaration for
+ * another extension such as `.d.css.ts`.
+ */
+const UNTYPED_SOURCE = /\.(?:[cm]?jsx?|d\.(?:[^./]+\.)?[cm]?ts)$/;
+
 /** The directory GitHub reads workflows from, which reads one whose name ends in lowercase `.yml` here. */
 const WORKFLOWS = '.github/workflows';
 
@@ -459,38 +462,113 @@ const WORKFLOWS = '.github/workflows';
 const ZIZMOR_IGNORE_COMMENT = /zizmor\s*:\s*ignore\s*\[/i;
 
 /**
+ * The `shell:` values a workflow may name. actionlint hands ShellCheck a
+ * script whose shell is bash or sh, and pwsh is the one other shell the set
+ * writes, so any other value runs a script no linter reads.
+ */
+const WORKFLOW_SHELLS: readonly string[] = ['bash', 'sh', 'pwsh'];
+
+/**
+ * Every `shell:` value in the workflow at `path` outside
+ * {@link WORKFLOW_SHELLS}, as findings: under the workflow's `defaults.run`,
+ * a job's `defaults.run`, or a step.
+ *
+ * @remarks
+ * actionlint skips ShellCheck for a value such as `/bin/bash -e {0}`
+ * although bash runs the script, so a value is held to the exact names. Bun's
+ * YAML reader refuses some text actionlint's accepts, so a workflow it cannot
+ * read is a finding rather than a pass.
+ */
+function shellFindings(path: string, text: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(text);
+  } catch (error: unknown) {
+    return [
+      `${quote(path)} does not parse as the gate reads YAML, so its shell values are unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
+    ];
+  }
+  if (!isTable(parsed)) {
+    return [`${quote(path)} is not one YAML mapping as the gate reads it, so its shell values are unknown`];
+  }
+  const shells: (readonly [string, unknown])[] = [];
+  const defaultShell = (where: string, holder: unknown): void => {
+    const defaults = isTable(holder) ? holder['defaults'] : undefined;
+    const run = isTable(defaults) ? defaults['run'] : undefined;
+    if (isTable(run) && Object.hasOwn(run, 'shell')) {
+      shells.push([`${where}defaults.run.shell`, run['shell']]);
+    }
+  };
+  defaultShell('', parsed);
+  const jobs = parsed['jobs'];
+  for (const [id, job] of isTable(jobs) ? Object.entries(jobs) : []) {
+    defaultShell(`jobs.${id}.`, job);
+    const steps = isTable(job) ? job['steps'] : undefined;
+    for (const [index, step] of (Array.isArray(steps) ? (steps as unknown[]) : []).entries()) {
+      if (isTable(step) && Object.hasOwn(step, 'shell')) {
+        shells.push([`jobs.${id}.steps[${String(index)}].shell`, step['shell']]);
+      }
+    }
+  }
+  return shells
+    .filter(([, value]) => typeof value !== 'string' || !WORKFLOW_SHELLS.includes(value))
+    .map(
+      ([where, value]) =>
+        `${quote(path)} sets ${where} to ${quoteValue(value)}, and actionlint hands ShellCheck a bash or sh script alone. Use ${WORKFLOW_SHELLS.join(', ')}`,
+    );
+}
+
+/**
  * Every way the tracked file at `path` falls outside what the workflows and
  * format rows read, as findings: a workflow whose path is not
- * `.github/workflows/<name>.yml` exactly, an inline zizmor waiver under
- * `.github`, and a path under a version control directory.
+ * `.github/workflows/<name>.yml` exactly, a workflow `shell:` value outside
+ * {@link WORKFLOW_SHELLS}, an inline zizmor waiver under `.github`, a path
+ * under a version control directory or one of {@link SKIPPED_DIRECTORIES},
+ * and a JavaScript or declaration file expected.ts does not name.
  *
  * @remarks
  * actionlint and zizmor read a workflow by its lowercase `.yml` name alone,
- * so a `.YML` or `.yaml` one passes both unread. A waiver belongs in the held
- * zizmor.yml, where changing it is a gate change.
+ * so a `.YML` or `.yaml` one passes both unread. A zizmor waiver belongs in
+ * zizmor.yml, the one place a reviewer reads waivers. A ShellCheck
+ * directive is refused by scripts/shellcheck.ts, which reads each script as
+ * ShellCheck does.
  */
 function rowScopeFindings(path: string, segments: readonly string[]): string[] {
   const found: string[] = [];
   const folded = segments.join('/');
   const directory = segments.slice(0, -1).join('/');
-  if (
-    directory === WORKFLOWS &&
-    /\.ya?ml$/.test(folded) &&
-    !(path.startsWith(`${WORKFLOWS}/`) && path.endsWith('.yml'))
-  ) {
-    found.push(
-      `${quote(path)} is a workflow outside ${WORKFLOWS}/<name>.yml, and actionlint and zizmor read that spelling alone. Rename it`,
-    );
+  const present = segments[0] === '.github' && existsSync(path);
+  const text = present ? readFileSync(path, 'utf8') : '';
+  if (directory === WORKFLOWS && /\.ya?ml$/.test(folded)) {
+    if (!(path.startsWith(`${WORKFLOWS}/`) && path.endsWith('.yml'))) {
+      found.push(
+        `${quote(path)} is a workflow outside ${WORKFLOWS}/<name>.yml, and actionlint and zizmor read that spelling alone. Rename it`,
+      );
+    }
+    if (present) {
+      found.push(...shellFindings(path, text));
+    }
   }
-  if (segments[0] === '.github' && existsSync(path) && ZIZMOR_IGNORE_COMMENT.test(readFileSync(path, 'utf8'))) {
+  if (ZIZMOR_IGNORE_COMMENT.test(text)) {
     found.push(
-      `${quote(path)} carries a zizmor ignore comment, and zizmor waives the audit it names. A waiver is an entry in ${ZIZMOR_CONFIG}, which the gate holds whole`,
+      `${quote(path)} carries a zizmor ignore comment, and zizmor waives the audit it names. A waiver is an entry in ${ZIZMOR_CONFIG}`,
     );
   }
   const vcs = segments.slice(0, -1).find((segment) => VCS_DIRECTORIES.includes(segment));
   if (vcs !== undefined) {
     found.push(
       `${quote(path)} sits under a ${vcs} directory, and Prettier skips a file there without a word, so the format row would count a file it never checked. Move it`,
+    );
+  }
+  const skipped = SKIPPED_DIRECTORIES.find((directory) => folded.startsWith(`${directory}/`));
+  if (skipped !== undefined) {
+    found.push(
+      `${quote(path)} is tracked under ${skipped}/, which the lint and format rows skip, so no row checks it while the product can still import it. Remove it from the index with git rm --cached`,
+    );
+  }
+  if (UNTYPED_SOURCE.test(folded) && !EXPECTED_UNTYPED_SOURCES.includes(path)) {
+    found.push(
+      `${quote(path)} is JavaScript or a declaration file, which tsc never checks, and ESLint lints no .jsx. Write it as TypeScript, or name it in scripts/expected.ts`,
     );
   }
   return found;
@@ -505,7 +583,7 @@ const GIT_ENVIRONMENT: Readonly<Record<string, string>> = {
 
 /** The paths one `git ls-files` call lists, split, or a finding when git fails. */
 async function listFiles(args: readonly string[], what: string): Promise<string[] | string> {
-  const listed = await run(['git', 'ls-files', '-z', ...args], GIT_TIMEOUT_MS, GIT_ENVIRONMENT, { inherit: false });
+  const listed = await run(['git', 'ls-files', '-z', ...args], GIT_ENVIRONMENT, { inherit: false });
   if (listed.exitCode !== 0) {
     return `git could not list the ${what} the gate refuses: it ${describe(listed)}`;
   }
@@ -513,16 +591,46 @@ async function listFiles(args: readonly string[], what: string): Promise<string[
 }
 
 /**
- * Every file in the tree the gate refuses to run beside, as findings: a file
- * a program in {@link CONFIG_SEARCHES} reads in place of the one the gate
- * names, a project config the gate does not hold or one that redirects a bare
- * import, a config key in any tracked `package.json`, a tracked path under a
- * `node_modules` directory, and a tracked file outside what the workflows and
- * format rows read.
+ * A finding when git's work tree is not this checkout, or undefined when it
+ * is, compared by canonical path.
  *
  * @remarks
- * git lists the tracked files once and the untracked ones on disk once, the
- * ignored ones included, outside node_modules and Claude Code's worktrees.
+ * git passes over a `.git` directory it cannot read, an empty one among them,
+ * and uses the first repository above it, where `git ls-files` lists that
+ * repository's files without a word. A `.git` file it cannot read fails
+ * instead.
+ */
+async function topLevelFinding(): Promise<string | undefined> {
+  const finished = await run(['git', 'rev-parse', '--show-toplevel'], GIT_ENVIRONMENT, { inherit: false });
+  const top = finished.stdout.trim();
+  if (finished.exitCode !== 0 || top.length === 0) {
+    return `git could not name the work tree it reads: it ${describe(finished)}`;
+  }
+  let same: boolean;
+  try {
+    same = realpathSync.native(top) === realpathSync.native('.');
+  } catch {
+    // A top directory that cannot be resolved is not this checkout.
+    same = false;
+  }
+  return same
+    ? undefined
+    : `git reads the work tree at ${quote(top)}, not this checkout, so every file it lists belongs to another repository. A .git here that git cannot read, such as an empty directory, sends it to one above. Run the gate from the root of a clone`;
+}
+
+/**
+ * Every file in the tree the gate refuses to run beside, as findings: a file
+ * a program in {@link CONFIG_SEARCHES} reads, a project config outside the
+ * named paths or one that redirects a bare import, `patchedDependencies` in
+ * any tracked `package.json`, a tracked path under a `node_modules`
+ * directory, a `node_modules` directory on disk below the root, and a tracked
+ * file outside what the workflows and format rows read.
+ *
+ * @remarks
+ * git lists nothing until it names this checkout as its work tree, and a
+ * work tree anywhere else is the one finding. It then lists the tracked files
+ * once and the untracked ones on disk once, the ignored ones included,
+ * outside the root node_modules and Claude Code's worktrees.
  * The gate compares each name through {@link fold}, since git's `icase`
  * pathspec magic folds ASCII alone. A config that changes what a row reports
  * is refused on disk, tracked or not, so a local gate agrees with CI, and a
@@ -537,9 +645,13 @@ async function listFiles(args: readonly string[], what: string): Promise<string[
  * beside it.
  */
 export async function trackedFindings(): Promise<string[]> {
+  const top = await topLevelFinding();
+  if (top !== undefined) {
+    return [top];
+  }
   const tracked = await listFiles([], 'tracked files');
   const untracked = await listFiles(
-    ['--others', '--exclude=node_modules', '--exclude=/.claude/worktrees/'],
+    ['--others', '--exclude=/node_modules/', '--exclude=/.claude/worktrees/'],
     'untracked files',
   );
   if (typeof tracked === 'string' || typeof untracked === 'string') {
@@ -549,13 +661,22 @@ export async function trackedFindings(): Promise<string[]> {
   const searches = CONFIG_SEARCHES.map((search) => ({ ...search, patterns: search.paths.map(searchPattern) }));
   const found: string[] = [];
   const modules: string[] = [];
+  const nested = new Set<string>();
   for (const path of [...tracked, ...untracked.filter((entry) => !trackedSet.has(entry))]) {
     const isTracked = trackedSet.has(path);
     const segments = path.split('/').map(fold);
     // node_modules itself too: a tracked link by that name stands in for the whole directory.
-    if (segments.includes('node_modules')) {
+    const at = segments.indexOf('node_modules');
+    if (at >= 0) {
       if (isTracked) {
         modules.push(path);
+      } else if (at > 0) {
+        nested.add(
+          path
+            .split('/')
+            .slice(0, at + 1)
+            .join('/'),
+        );
       }
       continue;
     }
@@ -569,6 +690,12 @@ export async function trackedFindings(): Promise<string[]> {
     if (search !== undefined) {
       const remove = search.personal === true ? 'Remove it from the index with git rm --cached' : 'Remove it';
       found.push(`${quote(path)} is ${search.what}, and ${search.reads}. ${remove}`);
+    }
+    const under = isTracked ? personalRoot(segments) : undefined;
+    if (under !== undefined) {
+      found.push(
+        `${quote(path)} is tracked under ${quote(under)}, a name .prettierignore skips as a personal file, so the format row never checks it. Remove it from the index with git rm --cached`,
+      );
     }
     const base = segments.at(-1) ?? '';
     if (PROJECT_CONFIG_NAMES.includes(base)) {
@@ -586,6 +713,15 @@ export async function trackedFindings(): Promise<string[]> {
     const more = modules.length > NODE_MODULES_SHOWN ? ` and ${String(modules.length - NODE_MODULES_SHOWN)} more` : '';
     found.push(
       `${shown.join(', ')}${more} ${modules.length === 1 ? 'is' : 'are'} tracked as or under a node_modules directory. bun install keeps what it finds there, bun run puts node_modules/.bin ahead of PATH, and Bun resolves an import from the nearest node_modules first. Remove each from the index with git rm -r --cached`,
+    );
+  }
+  if (nested.size > 0) {
+    const directories = [...nested];
+    const shown = directories.slice(0, NODE_MODULES_SHOWN).map((path) => quote(path));
+    const more =
+      directories.length > NODE_MODULES_SHOWN ? ` and ${String(directories.length - NODE_MODULES_SHOWN)} more` : '';
+    found.push(
+      `${shown.join(', ')}${more} ${directories.length === 1 ? 'is a node_modules directory' : 'are node_modules directories'} below the root. Bun, tsc and typescript-eslint resolve a bare import from the nearest node_modules first, so each replaces the installed package for the files beside it, and CI's checkout holds none. Remove each`,
     );
   }
   return found;
@@ -606,25 +742,6 @@ const SCRIPTS = 'scripts';
  */
 const SCRIPTS_TSCONFIG = `${SCRIPTS}/tsconfig.json`;
 
-/** What {@link SCRIPTS_TSCONFIG} holds, compared whole: no `paths`, `baseUrl` or `extends`. */
-const EXPECTED_SCRIPTS_TSCONFIG = {
-  compilerOptions: {
-    target: 'es2025',
-    module: 'esnext',
-    moduleResolution: 'bundler',
-    types: ['bun'],
-    strict: true,
-    noUncheckedIndexedAccess: true,
-    noImplicitOverride: true,
-    exactOptionalPropertyTypes: true,
-    noPropertyAccessFromIndexSignature: true,
-    verbatimModuleSyntax: true,
-    noEmit: true,
-    skipLibCheck: true,
-  },
-  include: ['*.ts'],
-} as const;
-
 /**
  * The names Bun reads under a script's directory to resolve its imports:
  * another tsconfig or jsconfig, a package scope, and a `node_modules` that
@@ -633,58 +750,114 @@ const EXPECTED_SCRIPTS_TSCONFIG = {
 const RESOLUTION_NAMES: readonly string[] = ['tsconfig.json', 'jsconfig.json', 'package.json', 'node_modules'];
 
 /**
- * What {@link BUNFIG} holds, compared whole: the install cooldown and nothing
- * else.
+ * The one key {@link BUNFIG} may carry, under its one table: the install
+ * cooldown.
  *
  * @remarks
- * Bun reads the file on every `bun <file>`, `bun run` and `bun test` started
- * in the checkout, and no flag turns that off. A top-level `preload` runs a
- * module before the gate's first line, a `[test]` preload runs one before
- * every test, and a `[define]` table rewrites values in the code Bun runs. The
- * file is committed because Renovate's lock file maintenance runs
- * `bun install` in a container with no user-level config.
+ * Bun reads the file on every `bun <file>`, `bun run`, `bun test` and
+ * `bun install` started in the checkout, and no flag turns that off. A
+ * top-level `preload` runs a module before the gate's first line, a `[test]`
+ * preload runs one before every test, a `[define]` table rewrites values in
+ * the code Bun runs, and `[install.cache] dir` points the install at a folder
+ * the branch commits. Any key but this one is refused, so a key the gate has
+ * never heard of is refused too. The file is committed because Renovate's
+ * lock file maintenance runs `bun install` in a container with no user-level
+ * config.
  */
-const EXPECTED_BUNFIG = { install: { minimumReleaseAge: 259_200 } } as const;
+const BUNFIG_KEY = ['install', 'minimumReleaseAge'] as const;
 
-/** Every way {@link BUNFIG} differs from {@link EXPECTED_BUNFIG}, as findings. */
+/** Every key {@link BUNFIG} carries beside {@link BUNFIG_KEY}, as findings. */
 async function bunfigFindings(): Promise<string[]> {
   const file = Bun.file(BUNFIG);
   if (!(await file.exists())) {
-    return [`${BUNFIG} is missing from the root, and it holds the install cooldown`];
+    return [];
   }
   let parsed: unknown;
   try {
     parsed = Bun.TOML.parse(await file.text());
   } catch (error: unknown) {
-    return [`${BUNFIG} does not parse: ${quote(error instanceof Error ? error.message : String(error))}`];
+    return [
+      `${BUNFIG} does not parse, so which keys Bun reads from it is unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
+    ];
   }
   if (!isTable(parsed)) {
     return [`${BUNFIG} is not a table`];
   }
+  const [table, key] = BUNFIG_KEY;
   const found: string[] = [];
-  for (const key of Object.keys(parsed)) {
-    if (key !== 'install') {
+  for (const name of Object.keys(parsed)) {
+    if (name !== table) {
       found.push(
-        `${BUNFIG} carries ${quote(key)}, and it holds [install] minimumReleaseAge alone. Bun runs a preload and applies a define before the gate's first line`,
+        `${BUNFIG} carries ${quote(name)}, and it holds [${table}] ${key} alone. Bun runs a preload and applies a define before the gate's first line`,
       );
     }
   }
-  const install = parsed['install'];
-  if (!isTable(install)) {
-    found.push(`${BUNFIG} carries no [install] table, and it holds the install cooldown`);
-    return found;
+  const install = parsed[table];
+  if (install !== undefined && !isTable(install)) {
+    found.push(`${BUNFIG} carries ${table} as ${quoteValue(install)}, and it is a table holding ${key} alone`);
   }
-  for (const key of Object.keys(install)) {
-    if (key !== 'minimumReleaseAge') {
-      found.push(`${BUNFIG} [install] carries ${quote(key)}, and it holds minimumReleaseAge alone`);
+  for (const name of isTable(install) ? Object.keys(install) : []) {
+    if (name !== key) {
+      found.push(
+        `${BUNFIG} [${table}] carries ${quote(name)}, and it holds ${key} alone. A cache dir or a registry there changes what bun install puts under node_modules`,
+      );
     }
   }
-  if (!sameValue(install['minimumReleaseAge'], EXPECTED_BUNFIG.install.minimumReleaseAge)) {
-    found.push(
-      `${BUNFIG} [install] minimumReleaseAge is ${quoteValue(install['minimumReleaseAge'])}, and it must be ${String(EXPECTED_BUNFIG.install.minimumReleaseAge)}`,
-    );
-  }
   return found;
+}
+
+/** The {@link PRETTIERRC} key naming the plugins Prettier imports, at the top or in an override's options. */
+const PRETTIER_PLUGINS = 'plugins';
+
+/** The path of every {@link PRETTIER_PLUGINS} key within `value`, at any depth, as `a.b[0].c`. */
+function pluginKeys(value: unknown, at: string): string[] {
+  if (Array.isArray(value)) {
+    return (value as unknown[]).flatMap((item, index) => pluginKeys(item, `${at}[${String(index)}]`));
+  }
+  if (!isTable(value)) {
+    return [];
+  }
+  return Object.entries(value).flatMap(([key, inner]) => {
+    const path = at === '' ? key : `${at}.${key}`;
+    return [...(key === PRETTIER_PLUGINS ? [path] : []), ...pluginKeys(inner, path)];
+  });
+}
+
+/**
+ * Every way {@link PRETTIERRC} makes the format row run code, as findings: a
+ * value other than a JSON object, and a {@link PRETTIER_PLUGINS} key at any
+ * depth.
+ *
+ * @remarks
+ * Prettier 3.9.8 under `--config .prettierrc` imports each plugin the file
+ * names, a package or a local path, at the top or in an override matching a
+ * file it checks, and imports a shared config module the file names as a
+ * string, each measured running its code. It reads the file as YAML, so the
+ * gate holds it to plain JSON, which both read alike, and refuses any other
+ * text rather than read it two ways.
+ */
+async function prettierrcFindings(): Promise<string[]> {
+  const file = Bun.file(PRETTIERRC);
+  if (!(await file.exists())) {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseJson(await file.text());
+  } catch (error: unknown) {
+    return [
+      `${PRETTIERRC} does not parse as plain JSON, so whether Prettier loads code through it is unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
+    ];
+  }
+  if (!isTable(parsed)) {
+    return [
+      `${PRETTIERRC} holds ${quoteValue(parsed)}, and it is an object of formatting options. Prettier imports a shared config module a string names and runs it`,
+    ];
+  }
+  return pluginKeys(parsed, '').map(
+    (path) =>
+      `${PRETTIERRC} carries ${quote(path)}, and Prettier imports each plugin it names, a package or a local path, and runs it in the format row. Remove it`,
+  );
 }
 
 /**
@@ -704,260 +877,250 @@ async function walk(path: string): Promise<Dirent[]> {
 }
 
 /**
- * The packages the gate's scripts import, by name, read from the scripts
- * themselves: every import that is not relative, not absolute, and not a
- * `node:` or `bun:` builtin.
- */
-async function gatePackages(): Promise<Set<string>> {
-  const transpiler = new Bun.Transpiler({ loader: 'ts' });
-  const packages = new Set<string>();
-  for (const entry of await walk(SCRIPTS)) {
-    if (!entry.isFile() || !entry.name.endsWith('.ts')) {
-      continue;
-    }
-    for (const { path } of transpiler.scanImports(await Bun.file(join(entry.parentPath, entry.name)).text())) {
-      if (/^(\.|\/|[a-z]:|node:|bun:)/i.test(path)) {
-        continue;
-      }
-      const segments = path.split('/');
-      packages.add(path.startsWith('@') ? segments.slice(0, 2).join('/') : (segments[0] ?? path));
-    }
-  }
-  return packages;
-}
-
-/**
- * The findings against what Bun reads to resolve the gate's own imports:
- * {@link SCRIPTS_TSCONFIG} differing from {@link EXPECTED_SCRIPTS_TSCONFIG},
- * any other {@link RESOLUTION_NAMES} entry under `scripts/`, and a
- * `package.json` patch to a package the gate imports.
- *
- * @remarks
- * The package list comes from the scripts' own imports, so a new import is
- * covered the moment it lands. A patch bun.lock records with no package.json
- * entry beside it is not applied, so package.json is the file read.
+ * The findings against what Bun reads to resolve the gate's own imports: a
+ * missing {@link SCRIPTS_TSCONFIG}, and any other {@link RESOLUTION_NAMES}
+ * entry under `scripts/`. The tsconfig's own `paths`, `baseUrl` and `extends`
+ * are read with every other project config's.
  */
 async function scriptsFindings(): Promise<string[]> {
-  const found = await heldWholeFindings({
-    path: SCRIPTS_TSCONFIG,
-    parse: parseJson,
-    expected: EXPECTED_SCRIPTS_TSCONFIG,
-    missing: "it keeps the root tsconfig.json away from the gate's imports",
-    differs: "Its paths, baseUrl and extends redirect the gate's imports",
-  });
+  const found: string[] = [];
+  if (!existsSync(SCRIPTS_TSCONFIG)) {
+    found.push(
+      `${SCRIPTS_TSCONFIG} is missing, and it keeps the root tsconfig.json away from the gate's imports. Restore it`,
+    );
+  }
   for (const entry of await walk(SCRIPTS)) {
     const path = join(entry.parentPath, entry.name).replaceAll('\\', '/');
     if (RESOLUTION_NAMES.includes(fold(entry.name)) && fold(path) !== SCRIPTS_TSCONFIG) {
       found.push(`${quote(path)} is one Bun reads to resolve a gate script's imports, and ${SCRIPTS} holds none`);
     }
   }
+  return found;
+}
+
+/** The `package.json` tables that name the packages bun install puts under node_modules. */
+const DEPENDENCY_KEYS: readonly string[] = ['dependencies', 'devDependencies', 'optionalDependencies'];
+
+/** The lockfile bun install writes, whose `packages` table names every package it installs and where. */
+const BUN_LOCK = 'bun.lock';
+
+/** How many missing packages the finding names before it counts the rest. */
+const MISSING_SHOWN = 5;
+
+/**
+ * Whether the platform named `current` is one a bun.lock `os` or `cpu` value
+ * admits: absent, a name, or a list of names where `!` excludes one. Bun
+ * writes `none` for a platform it has no name for, which admits nothing. A
+ * value of any other shape admits every platform, so the package is required.
+ */
+function admits(value: unknown, current: string): boolean {
+  const names: unknown[] = typeof value === 'string' ? [value] : Array.isArray(value) ? (value as unknown[]) : [];
+  const listed = names.filter((name) => typeof name === 'string');
+  if (listed.length === 0 || listed.length !== names.length) {
+    return true;
+  }
+  const allowed = listed.filter((name) => !name.startsWith('!'));
+  return (allowed.length === 0 || allowed.includes(current)) && !listed.includes(`!${current}`);
+}
+
+/**
+ * The chain of package names a bun.lock `packages` key spells, from the root:
+ * `eslint/ignore` is the `ignore` nested under `eslint`, and a scoped name
+ * spans two parts.
+ */
+function lockNames(key: string): string[] {
+  const parts = key.split('/');
+  const names: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index] ?? '';
+    const name = part.startsWith('@') ? `${part}/${parts[index + 1] ?? ''}` : part;
+    index += name.split('/').length - 1;
+    names.push(name);
+  }
+  return names;
+}
+
+/** The `node_modules` path, as segments below the root, where bun install puts the package a bun.lock key names. */
+function lockPath(key: string): string[] {
+  return lockNames(key).flatMap((name) => ['node_modules', ...name.split('/')]);
+}
+
+/**
+ * The key of the package a dependency named `name` of the package at key
+ * `from` resolves to, or undefined when bun.lock holds none: the key nested
+ * under `from` first, then each key nested under a package above it, then the
+ * hoisted one. The root is the empty key.
+ */
+function lockEdge(packages: ReadonlyMap<string, LockPackage>, from: string, name: string): string | undefined {
+  const chain = from === '' ? [] : lockNames(from);
+  for (let depth = chain.length; depth >= 0; depth -= 1) {
+    const key = [...chain.slice(0, depth), name].join('/');
+    if (packages.has(key)) {
+      return key;
+    }
+  }
+  return undefined;
+}
+
+/** A bun.lock `packages` entry as the install check reads it. */
+interface LockPackage {
+  readonly os: unknown;
+  readonly cpu: unknown;
+  /** Whether the entry names a `libc`, which Bun reports for no system. */
+  readonly libc: boolean;
+  /** The names under `dependencies`, `optionalDependencies` and `peerDependencies`, less `optionalPeers`. */
+  readonly dependencies: readonly string[];
+}
+
+/**
+ * The `packages` table of a parsed bun.lock, by key. An entry's fields are
+ * the first table in its list, which holds them for a registry package and
+ * for a git, tarball or folder one alike.
+ */
+function lockPackages(lock: unknown): Map<string, LockPackage> {
+  const table = isTable(lock) ? lock['packages'] : undefined;
+  const packages = new Map<string, LockPackage>();
+  for (const [key, entry] of isTable(table) ? Object.entries(table) : []) {
+    const fields = (Array.isArray(entry) ? (entry as unknown[]) : []).find((item) => isTable(item)) ?? {};
+    const names = (field: string): string[] => {
+      const value = fields[field];
+      return isTable(value) ? Object.keys(value) : [];
+    };
+    const optionalPeers = fields['optionalPeers'];
+    const skipped = Array.isArray(optionalPeers) ? (optionalPeers as unknown[]) : [];
+    packages.set(key, {
+      os: fields['os'],
+      cpu: fields['cpu'],
+      libc: Object.hasOwn(fields, 'libc'),
+      dependencies: [
+        ...names('dependencies'),
+        ...names('optionalDependencies'),
+        ...names('peerDependencies').filter((name) => !skipped.includes(name)),
+      ],
+    });
+  }
+  return packages;
+}
+
+/**
+ * Every package bun install puts under the checkout's `node_modules` for this
+ * platform that is missing there, or held through a link out of the checkout,
+ * as findings, each at the path its {@link BUN_LOCK} key names. The walk starts
+ * at each root {@link PACKAGE_JSON} name and follows every edge bun.lock
+ * records, and an entry whose `os` or `cpu` leaves this platform out is passed
+ * over with every package reached through it alone.
+ *
+ * @remarks
+ * Bun 1.4.2 installs a package only through a parent it installs, and skips an
+ * entry whose `os` or `cpu` leaves the platform out, whether a root name or a
+ * dependency of any kind. So sharp's `@img/sharp-wasm32`, reached only through
+ * a FreeBSD parent and a parent whose `cpu` is `none`, lands nowhere, while a
+ * package a skipped parent shares with an installed one lands. Bun resolves a
+ * bare import from the nearest `node_modules` holding the package, so a
+ * checkout that lacks one loads a parent directory's copy, and with no
+ * `node_modules` at all Bun tries to install it at run time. Either way the
+ * code that runs is not the version bun.lock pins. That holds for a package
+ * the manifest never names too, as the typecheck row's native compiler, the
+ * platform package `@typescript/native` resolves. The gate imports zod and
+ * prettier, eslint.config.ts and commitlint.config.js import their plugins,
+ * and each package is refused here before any row loads it. An entry naming a
+ * `libc`, and everything reached through it alone, is checked for a link out
+ * alone, since which libc this system runs is not something Bun reports.
+ */
+async function installFindings(): Promise<string[]> {
   let manifest: unknown;
+  let lock: unknown;
   try {
     manifest = parseJson(await Bun.file(PACKAGE_JSON).text());
   } catch (error: unknown) {
-    // Missing, malformed or read two ways: refused, since what Bun and bun install read from it is unknown.
-    found.push(
-      `${PACKAGE_JSON} does not parse as the gate reads it, so its patchedDependencies cannot be read: ${quote(error instanceof Error ? error.message : String(error))}`,
-    );
-    return found;
+    // Missing, malformed or read two ways: refused, since which packages Bun must find is unknown.
+    return [
+      `${PACKAGE_JSON} does not parse as the gate reads it, so which packages node_modules must hold is unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
+    ];
   }
-  const patches = isTable(manifest) ? manifest['patchedDependencies'] : undefined;
-  if (isTable(patches)) {
-    const packages = await gatePackages();
-    for (const key of Object.keys(patches)) {
-      const at = key.lastIndexOf('@');
-      const name = at > 0 ? key.slice(0, at) : key;
-      if (packages.has(name)) {
-        found.push(`package.json patches ${quote(key)}, and the gate imports ${name} before its first check`);
+  try {
+    lock = Bun.JSONC.parse(await Bun.file(BUN_LOCK).text());
+  } catch (error: unknown) {
+    // Missing or malformed: refused, since where bun install puts each package is unknown.
+    return [
+      `${BUN_LOCK} does not parse as the gate reads it, so which packages node_modules must hold is unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
+    ];
+  }
+  const packages = lockPackages(lock);
+  // Each key reached, and whether it must be present rather than checked for a link out alone.
+  const reached = new Map<string, boolean>();
+  const queue: (readonly [string, boolean])[] = DEPENDENCY_KEYS.flatMap((field) => {
+    const table = isTable(manifest) ? manifest[field] : undefined;
+    return (isTable(table) ? Object.keys(table) : []).map(
+      (name) => [lockEdge(packages, '', name) ?? name, true] as const,
+    );
+  });
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    const [key, must] = next;
+    const entry = packages.get(key);
+    if (
+      reached.get(key) === true ||
+      (reached.has(key) && !must) ||
+      (entry !== undefined && (!admits(entry.os, process.platform) || !admits(entry.cpu, process.arch)))
+    ) {
+      continue;
+    }
+    const needed = must && entry?.libc !== true;
+    reached.set(key, needed);
+    for (const name of entry?.dependencies ?? []) {
+      const child = lockEdge(packages, key, name);
+      if (child !== undefined) {
+        queue.push([child, needed]);
       }
     }
   }
-  return found;
-}
-
-/* ///// The files the rows and hooks read ///// */
-
-/**
- * What {@link PRETTIERRC} holds, compared whole. `--config` stops Prettier's
- * search for any other config, and a `plugins` entry here would still load a
- * module, so the file holds formatting options alone.
- */
-const EXPECTED_PRETTIERRC = { singleQuote: true, printWidth: 120 } as const;
-
-/**
- * The patterns every repository's {@link PRETTIERIGNORE} holds, beside the
- * ones expected.ts adds, each anchored at the root. The first two are files
- * release-please writes. The rest are directories a checkout fills locally,
- * so `bun run format`, which walks the tree, never rewrites another worktree
- * or build output.
- */
-const SHARED_PRETTIERIGNORE_PATTERNS: readonly string[] = [
-  '/CHANGELOG.md',
-  '/.release-please-manifest.json',
-  '.claude/worktrees/',
-  '/coverage/',
-  '/dist/',
-];
-
-/** Every pattern {@link PRETTIERIGNORE} holds, each once. */
-export const PRETTIERIGNORE_PATTERNS: readonly string[] = [
-  ...SHARED_PRETTIERIGNORE_PATTERNS,
-  ...OWN_PRETTIERIGNORE_PATTERNS,
-];
-
-/** What {@link TAPLO_CONFIG} holds: which TOML files taplo formats. */
-const EXPECTED_TAPLO_CONFIG = {
-  include: ['**/*.toml'],
-  exclude: ['node_modules/**', '.claude/worktrees/**'],
-} as const;
-
-/**
- * What {@link COMMITLINT_CONFIG} holds, byte for byte, the same in every
- * repository of the set. commitlint runs the file as a module, and it decides
- * which commit messages pass.
- */
-const EXPECTED_COMMITLINT_CONFIG = `import { readFileSync } from 'node:fs';
-
-// .github/commit-scopes.json lists each scope and what it covers. CONTRIBUTING.md points at it
-// rather than restating it, so a new scope is one edit. The path resolves against this file,
-// so the list is found however this module is loaded.
-const vocabularyPath = new URL('.github/commit-scopes.json', import.meta.url);
-const scopes = JSON.parse(readFileSync(vocabularyPath, 'utf8')).map((entry) => entry.scope);
-
-// scope-enum accepts every scope when handed an empty list, so a vocabulary
-// that failed to load would read as a passing gate.
-if (scopes.length === 0) {
-  throw new Error(\`\${vocabularyPath.href} must list at least one scope.\`);
-}
-
-export default {
-  extends: ['@commitlint/config-conventional'],
-  // Dependabot writes release notes and compare links into the body, well past
-  // the 72-column limit, and that is the update path the cooldown protects. A
-  // repository without Dependabot never matches it. The squash subject lint in
-  // CI reads the header alone, so a skipped commit's header is still checked
-  // where it lands.
-  ignores: [(message) => message.includes('Signed-off-by: dependabot[bot]')],
-  rules: {
-    'scope-enum': [2, 'always', scopes],
-    // 72 keeps a subject readable in \`git log --oneline\` inside an 80-column
-    // terminal, with room for the hash and any ref decoration.
-    'header-max-length': [2, 'always', 72],
-    // The same width for the body, so a message reads the same in a terminal
-    // as it does on GitHub. A line holding a URL is exempt by the rule.
-    'body-max-line-length': [2, 'always', 72],
-  },
-};
-`;
-
-/** A file the gate holds whole: how to read it, what it must hold, and why. */
-interface HeldWhole {
-  readonly path: string;
-  readonly parse: (text: string) => unknown;
-  readonly expected: unknown;
-  /** Why the file must be there, after "is missing, and". */
-  readonly missing: string;
-  /** What a change to it would do. */
-  readonly differs: string;
-}
-
-/** Every way `held.path` differs from `held.expected`, as findings. */
-async function heldWholeFindings(held: HeldWhole): Promise<string[]> {
-  const file = Bun.file(held.path);
-  if (!(await file.exists())) {
-    return [`${held.path} is missing, and ${held.missing}`];
-  }
-  let parsed: unknown;
-  try {
-    parsed = held.parse(await file.text());
-  } catch (error: unknown) {
-    return [
-      `${held.path} does not parse as the gate reads it: ${quote(error instanceof Error ? error.message : String(error))}. ${held.differs}`,
-    ];
-  }
-  return sameValue(parsed, held.expected)
-    ? []
-    : [
-        `${held.path} is ${quoteValue(parsed)}, and it must be exactly ${JSON.stringify(held.expected)}. ${held.differs}`,
-      ];
-}
-
-/** A file written as code that the gate holds byte for byte: what it must hold, and why. */
-interface HeldText {
-  readonly path: string;
-  readonly expected: string;
-  /** What the file decides, after "because". */
-  readonly decides: string;
-}
-
-/**
- * Every way `held.path` differs from `held.expected`, as findings, naming the
- * first line that differs, quoted on both sides with its line ending.
- */
-async function heldTextFindings(held: HeldText): Promise<string[]> {
-  const file = Bun.file(held.path);
-  if (!(await file.exists())) {
-    return [`${held.path} is missing, and the gate holds it whole, because ${held.decides}`];
-  }
-  const text = await file.text();
-  if (text === held.expected) {
-    return [];
-  }
-  const got = text.split(/(?<=\n)/);
-  const want = held.expected.split(/(?<=\n)/);
-  const line =
-    Array.from({ length: Math.max(got.length, want.length) }, (_, i) => i).find((i) => got[i] !== want[i]) ?? 0;
-  const shown = (lines: readonly string[]): string => {
-    const at = lines[line];
-    return at === undefined ? 'the end of the file' : quote(at);
-  };
-  return [
-    `${held.path} differs from the text the gate holds for it, first at line ${String(line + 1)}, which reads ${shown(got)} where the gate holds ${shown(want)}. The gate holds it whole, because ${held.decides}, so change both in one commit`,
-  ];
-}
-
-/**
- * Every way {@link PRETTIERIGNORE} differs from
- * {@link PRETTIERIGNORE_PATTERNS}, as findings.
- *
- * @remarks
- * Every line is a comment starting with `#`, an empty line, or one of the
- * patterns exactly, and each pattern appears once. A line with a leading or
- * trailing space, a negation or any other pattern is a finding, and so is a
- * missing pattern, so what the format row skips changes only with this file.
- */
-async function prettierignoreFindings(): Promise<string[]> {
-  const file = Bun.file(PRETTIERIGNORE);
-  if (!(await file.exists())) {
-    return [`${PRETTIERIGNORE} is missing, and the format row passes it as the one ignore file`];
-  }
+  const required = new Map([...reached].map(([key, must]) => [lockPath(key).join('/'), must]));
+  const root = realpathSync.native('.');
+  const missing: string[] = [];
   const found: string[] = [];
-  const seen = new Set<string>();
-  const lines = (await file.text()).split('\n');
-  if (lines.at(-1) === '') {
-    lines.pop();
-  }
-  for (const line of lines) {
-    if (line === '' || line.startsWith('#')) {
+  for (const [path, must] of required) {
+    let real: string;
+    try {
+      real = realpathSync.native(resolve(path, PACKAGE_JSON));
+    } catch {
+      // Missing, or a link to nothing: either way the checkout does not hold the package.
+      if (must) {
+        missing.push(path);
+      }
       continue;
     }
-    if (!PRETTIERIGNORE_PATTERNS.includes(line) || seen.has(line)) {
+    const inside = relative(root, real);
+    if (inside.startsWith('..') || isAbsolute(inside)) {
       found.push(
-        `${PRETTIERIGNORE} carries ${quote(line)}, and it holds ${PRETTIERIGNORE_PATTERNS.join(', ')} alone, each once. A pattern there hides files from the format row`,
+        `${quote(path)} leads out of the checkout, to ${quote(real)}, so what loads is not this checkout's install. Run bun install`,
       );
     }
-    seen.add(line);
   }
-  for (const pattern of PRETTIERIGNORE_PATTERNS.filter((entry) => !seen.has(entry))) {
-    found.push(`${PRETTIERIGNORE} lacks ${quote(pattern)}`);
+  if (missing.length > 0) {
+    const shown = missing.slice(0, MISSING_SHOWN).map((path) => quote(path));
+    const more = missing.length > MISSING_SHOWN ? ` and ${String(missing.length - MISSING_SHOWN)} more` : '';
+    found.unshift(
+      `${shown.join(', ')}${more} ${missing.length === 1 ? 'is' : 'are'} missing, where bun install puts ${missing.length === 1 ? 'it' : 'them'} for this platform. Bun then loads a copy from a parent directory's node_modules or installs one at run time, neither the version bun.lock pins. Run bun install`,
+    );
   }
   return found;
 }
+
+/* ///// The root ///// */
+
+/**
+ * The root entry actionlint reads the start of the ShellCheck stand-in's
+ * command line as: every word of it is single-quoted, and actionlint 1.7.12
+ * looks the whole value up as one program path before it splits the words.
+ * On Linux and macOS the value starts `'/`, a relative path whose first
+ * segment is this name.
+ */
+const QUOTE_ENTRY = "'";
 
 /**
  * Every root entry the gate refuses, as findings: a file named like a program
- * the gate, its hooks or an install start, with any extension or none, and a
- * `.config` in any case.
+ * the gate, its hooks or an install start, with any extension or none, a
+ * `.config` in any case, and a file, directory or link named {@link QUOTE_ENTRY}.
  *
  * @remarks
  * The gate starts a program from an absolute PATH entry outside the
@@ -968,6 +1131,11 @@ async function prettierignoreFindings(): Promise<string[]> {
 async function programFindings(): Promise<string[]> {
   const found: string[] = [];
   for (const entry of await readdir('.', { withFileTypes: true })) {
+    if (entry.name === QUOTE_ENTRY) {
+      found.push(
+        `${quote(entry.name)} is at the root, and actionlint reads the ShellCheck stand-in's whole command line as a path below it before splitting the words, so a file there runs in place of ShellCheck on Linux and macOS. Remove it`,
+      );
+    }
     if (!entry.isDirectory() && !PROGRAM_NAMED_FILES.includes(fold(entry.name)) && isProgramName(entry.name)) {
       found.push(
         `${quote(entry.name)} is named like a program the gate, its hooks or an install start, and a clone carries no program at its root. Remove it`,
@@ -975,7 +1143,7 @@ async function programFindings(): Promise<string[]> {
     }
     if (fold(entry.name) === '.config') {
       found.push(
-        `${quote(entry.name)} is at the root, and mise, lefthook and commitlint's cosmiconfig each read a config from it that no row holds. Remove it`,
+        `${quote(entry.name)} is at the root, and mise, lefthook and commitlint's cosmiconfig each read a config from it whatever a flag names. Remove it`,
       );
     }
   }
@@ -983,68 +1151,23 @@ async function programFindings(): Promise<string[]> {
 }
 
 /**
- * Every way the files Bun and the gate's tools read before they run differ
- * from what the gate expects, as findings: {@link BUNFIG}, what resolves the
- * gate's own imports, the configs and ignore files the rows and hooks read,
- * and a root file named like a program.
+ * Every way the files Bun and the gate's tools read before they run would
+ * change what a row checks, as findings: a key in {@link BUNFIG} beside the
+ * cooldown, a {@link PRETTIERRC} that loads code, what resolves the gate's own
+ * imports, a package bun.lock installs that node_modules lacks, and a root
+ * entry named like a program or read as the ShellCheck stand-in's path.
  *
  * @remarks
  * The gate calls this before any row, because Bun honored its files before
  * the gate's first line: a finding keeps a changed file from merging, and it
- * cannot stop what the file already ran. The configs decide what the rows
- * check, skip or waive, and the two written as code run inside a tool, so a
- * change to any of them is a change to this file or expected.ts, which a
- * reviewer reads as a gate change.
+ * cannot stop what the file already ran.
  */
 export async function startupFindings(): Promise<string[]> {
   return [
     ...(await bunfigFindings()),
+    ...(await prettierrcFindings()),
     ...(await scriptsFindings()),
-    ...(
-      await Promise.all(
-        Object.entries(EXPECTED_PROJECT_CONFIGS).map(([path, expected]) =>
-          heldWholeFindings({
-            path,
-            parse: parseJson,
-            expected,
-            missing: 'scripts/expected.ts holds it',
-            differs: 'Its files, strictness and noCheck decide what the typecheck and lint rows check',
-          }),
-        ),
-      )
-    ).flat(),
-    ...(await heldWholeFindings({
-      path: PRETTIERRC,
-      parse: parseJson,
-      expected: EXPECTED_PRETTIERRC,
-      missing: 'the format row names it',
-      differs: 'Prettier loads a plugin it names',
-    })),
-    ...(await prettierignoreFindings()),
-    ...(await heldWholeFindings({
-      path: TAPLO_CONFIG,
-      parse: Bun.TOML.parse,
-      expected: EXPECTED_TAPLO_CONFIG,
-      missing: 'the toml row names it',
-      differs: 'Its include and exclude decide which TOML files the toml row checks',
-    })),
-    ...(await heldWholeFindings({
-      path: ZIZMOR_CONFIG,
-      parse: Bun.YAML.parse,
-      expected: EXPECTED_ZIZMOR_CONFIG,
-      missing: 'the workflows row names it',
-      differs: 'It can turn an audit off or waive an advisory',
-    })),
-    ...(await heldTextFindings({
-      path: ESLINT_CONFIG,
-      expected: EXPECTED_ESLINT_CONFIG,
-      decides: 'ESLint runs it as a module, and its ignores and rules decide what the lint row checks',
-    })),
-    ...(await heldTextFindings({
-      path: COMMITLINT_CONFIG,
-      expected: EXPECTED_COMMITLINT_CONFIG,
-      decides: 'commitlint runs it as a module, and it decides which commit messages pass',
-    })),
+    ...(await installFindings()),
     ...(await programFindings()),
   ];
 }
