@@ -70,48 +70,22 @@ export function plain(printed: string): string {
   return printed.replace(CONTROL_SEQUENCE, '').replaceAll('\r\n', '\n');
 }
 
-/** Code points Unicode lists as default-ignorable, which HFS+ leaves out when it compares names. */
-const IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
-
 /**
- * `name` keyed for comparison against a name a tool reads: default-ignorable
- * code points removed, then mapped to upper and back to lower case. This is
- * the set's one folding rule, the same in every stack's gate.
+ * `name` keyed for comparison against a name a tool reads: mapped to upper and
+ * back to lower case. This is the set's one folding rule, the same in every
+ * stack's gate.
  *
  * @remarks
  * A case-insensitive filesystem hands a tool a tracked file under a spelling
  * that differs from the one the tool asks for. The key merges ASCII case, the
  * letters that map to an ASCII one such as ſ with s and the Kelvin sign with
- * k, full case mapping's expansions such as ß with ss and ﬁ with fi, dotless ı
- * with i, and the ignorable marks HFS+ skips. Every name the gate refuses is
- * ASCII and every file it names passes in its exact spelling alone, so a merge
- * beyond what a filesystem does costs a false refusal at worst.
+ * k, full case mapping's expansions such as ß with ss and ﬁ with fi, and
+ * dotless ı with i. Every name the gate refuses is ASCII and every file it
+ * names passes in its exact spelling alone, so a merge beyond what a
+ * filesystem does costs a false refusal at worst.
  */
 export function fold(name: string): string {
-  return name.replace(IGNORABLE, '').toUpperCase().toLowerCase();
-}
-
-/**
- * The programs the gate and its hooks start by name rather than by path.
- *
- * @remarks
- * A file at the repository root named like one of these, with any extension
- * or none, is refused before any row. {@link resolveProgram} never reads
- * the working directory, so none of them can stand in for the program either
- * way. The gate starts gh, git and mise by name, the hooks and the
- * package.json scripts start bun, lefthook's install script starts node, and
- * bunx is the name a contributor types to run a package.
- */
-export const PROGRAM_NAMES: readonly string[] = ['bun', 'bunx', 'gh', 'git', 'mise', 'node'];
-
-/**
- * Whether `name`'s part before its first dot, compared through {@link fold},
- * is a program name. Windows runs a file for a bare name under any extension
- * PATHEXT lists, and a machine can list more than the defaults.
- */
-export function isProgramName(name: string): boolean {
-  const stem = fold(name).split('.')[0] ?? '';
-  return PROGRAM_NAMES.includes(stem);
+  return name.toUpperCase().toLowerCase();
 }
 
 /** Whether `path` is a file this process can start. */
@@ -226,6 +200,41 @@ export function resolveProgram(program: string): string | undefined {
 }
 
 /**
+ * The command that starts `tool`, a JavaScript tool the checkout installs,
+ * through `bun x --bun --no-install` under the Bun running the gate.
+ *
+ * @remarks
+ * `bun x` is bunx. It runs the command the install put in the working
+ * directory's `node_modules/.bin`, under Bun rather than a `node` on PATH,
+ * and it fetches nothing. When that directory lacks the command, bunx runs a
+ * copy from a parent directory's `node_modules/.bin`, from PATH or from its
+ * own cache, none of them the version bun.lock pins. So the command is
+ * refused first unless the entry bunx reads resolves, through every link, to
+ * a regular file: `<tool>.exe` on Windows, and `<tool>` elsewhere, where the
+ * install writes a link. A link left behind by a removed package points at
+ * nothing. bunx ignores `--no-env-file`, so none is passed.
+ *
+ * @throws When the entry is missing, a dangling link or not a file, naming
+ * the install to run
+ */
+export function jsTool(tool: string): string[] {
+  const bin = `node_modules/.bin/${process.platform === 'win32' ? `${tool}.exe` : tool}`;
+  let installed: boolean;
+  try {
+    installed = statSync(realpathSync.native(bin)).isFile();
+  } catch {
+    // Missing, or a link to nothing: the checkout does not hold the tool.
+    installed = false;
+  }
+  if (!installed) {
+    throw new Error(
+      `${tool} is not installed in this checkout: run bun install --frozen-lockfile, or bun install --frozen-lockfile --ignore-scripts in a worktree (CONTRIBUTING.md#setup).`,
+    );
+  }
+  return [process.execPath, 'x', '--bun', '--no-install', tool];
+}
+
+/**
  * One finished process: what it printed and how it ended.
  */
 export interface Finished {
@@ -287,18 +296,14 @@ const COLORLESS: Readonly<Record<string, string | undefined>> = {
 };
 
 /**
- * What every process that inherits the gate's environment goes without: the
- * variables every Bun reads before its own arguments. BUN_OPTIONS carries
- * arguments ahead of them, where a test name pattern hides tests from a count
- * and a preload or an env file reaches inside a tool, and BUN_INSPECT_PRELOAD
- * runs a module in every Bun start. On Windows Bun reads each name in any
- * spelling.
+ * What every process that inherits the gate's environment goes without:
+ * BUN_OPTIONS, which every Bun the gate starts directly reads as arguments
+ * ahead of its own, where a test name pattern hides tests from a count and a
+ * preload or an env file reaches inside a row. An ordinary shell can set it.
+ * On Windows Bun reads the name in any spelling.
  */
 const WITHHELD: Readonly<Record<string, undefined>> = {
   BUN_OPTIONS: undefined,
-  BUN_INSPECT: undefined,
-  BUN_INSPECT_PRELOAD: undefined,
-  BUN_INSPECT_CONNECT_TO: undefined,
 };
 
 /** How long a process's output may stay open after it exits, since a process it started can hold it. */
@@ -400,7 +405,7 @@ export async function run(
     return {
       exitCode: 127,
       stdout: '',
-      stderr: `${program}: no absolute PATH entry holds it, and the working directory is never searched`,
+      stderr: `${quote(program)}: no absolute PATH entry holds it, and the working directory is never searched`,
       heldOpen: false,
     };
   }
@@ -417,7 +422,7 @@ export async function run(
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    return { exitCode: 127, stdout: '', stderr: `${program}: ${message}`, heldOpen: false };
+    return { exitCode: 127, stdout: '', stderr: `${quote(program)}: ${message}`, heldOpen: false };
   }
   let heldOpen = false;
   let settled = false;
@@ -439,6 +444,27 @@ export async function run(
   settled = true;
   clearTimeout(drain);
   return { exitCode: heldOpen ? -1 : exitCode, stdout, stderr, heldOpen };
+}
+
+/**
+ * The whole environment of every git the gate and its scripts start: no
+ * system or global config, and nothing else.
+ *
+ * @remarks
+ * A git hook exports `GIT_DIR` and `GIT_INDEX_FILE`, and either points git at
+ * a repository or an index other than the working tree, so a gate run from a
+ * hook would read or write the hook's own. An env file Bun loaded can set any
+ * other `GIT_` name. git lists, searches and diffs the tree with none of them,
+ * and /dev/null is the spelling Git for Windows reads as an empty file too.
+ */
+const GIT_ENVIRONMENT: Readonly<Record<string, string>> = {
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+};
+
+/** Runs git with `args` in {@link GIT_ENVIRONMENT} and nothing inherited. */
+export async function git(args: readonly string[]): Promise<Finished> {
+  return run(['git', ...args], GIT_ENVIRONMENT, { inherit: false });
 }
 
 /**

@@ -3,7 +3,7 @@ import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, sep } from 'node:path';
-import { fold, resolveProgram, run } from './run';
+import { fold, git, jsTool, resolveProgram, run } from './run';
 import { isolate, launcherName, spellings, StandIns, WINDOWS } from './stand-ins';
 import { trackedFindings } from './startup';
 
@@ -129,24 +129,19 @@ test('a child that inherits gets NO_COLOR, and no FORCE_COLOR or CLICOLOR_FORCE 
   expect(spellings(env, 'CLICOLOR_FORCE')).toEqual([]);
 });
 
-// Each value is one Bun starts under without failing, so the stand-in records
-// its start whether or not the name reaches it: a flag, an inspector address
-// nothing listens on, and a preload that does nothing.
-test.each([
-  ['BUN_OPTIONS', (): string => '--smol'],
-  ['bun_options', (): string => '--smol'],
-  ['BUN_INSPECT', (): string => 'ws://127.0.0.1:9/x'],
-  ['Bun_Inspect_Preload', (): string => join(standIns.dir, 'inert-preload.ts')],
-  ['bun_inspect_connect_to', (): string => 'ws://127.0.0.1:9/x'],
-] as const)('a child that inherits goes without %p, in every spelling of its name', async (name, value) => {
-  writeFileSync(join(standIns.dir, 'inert-preload.ts'), 'export {};\n');
-  process.env[name] = value();
+// The value is a flag Bun starts under without failing, so the stand-in
+// records its start whether or not the name reaches it.
+test.each(['BUN_OPTIONS', 'bun_options'])(
+  'a child that inherits goes without %p, in every spelling of its name',
+  async (name: string) => {
+    process.env[name] = '--smol';
 
-  await run([standIns.path('tool')]);
+    await run([standIns.path('tool')]);
 
-  expect(standIns.calls()).toHaveLength(1);
-  expect(spellings(standIns.calls()[0]?.env ?? {}, name)).toEqual([]);
-});
+    expect(standIns.calls()).toHaveLength(1);
+    expect(spellings(standIns.calls()[0]?.env ?? {}, name)).toEqual([]);
+  },
+);
 
 test('a process started with inherit false receives the variables given and none of the gate environment', async () => {
   process.env['GATE_PASS'] = 'through';
@@ -185,7 +180,7 @@ test('a program no PATH entry holds exits 127, saying which and that the working
   const finished = await run(['gate-absent-program']);
 
   expect(finished.exitCode).toBe(127);
-  expect(finished.stderr).toContain('gate-absent-program');
+  expect(finished.stderr).toStartWith('"gate-absent-program": ');
   expect(finished.stderr).toContain('working directory is never searched');
   expect(started()).toEqual([]);
 });
@@ -198,8 +193,6 @@ const at = (codePoint: number): string => String.fromCodePoint(codePoint);
 
 const FOLDS: readonly (readonly [string, string, string])[] = [
   ['ASCII case', 'MISE.TOML', 'mise.toml'],
-  ['a zero-width space, stripped', `mi${at(0x200b)}se.toml`, 'mise.toml'],
-  ['a soft hyphen, stripped', `.np${at(0xad)}mrc`, '.npmrc'],
   ['long s, mapped to s', `${at(0x17f)}hellcheck`, 'shellcheck'],
   ['the Kelvin sign, mapped to k', `${at(0x212a)}ey`, 'key'],
   ['the fi ligature, expanded', `${at(0xfb01)}le`, 'file'],
@@ -464,6 +457,131 @@ test.each(PLANTED_CASES)(
   },
 );
 
+/* ///// JavaScript tools through bunx ///// */
+
+/** The entry bunx reads for `tool` on this platform, below node_modules/.bin. */
+function binEntry(tool: string): string {
+  return join(cwd, 'node_modules', '.bin', WINDOWS ? `${tool}.exe` : tool);
+}
+
+/** Whether this process can make a symbolic link to a file, which Windows grants only in some setups. */
+function fileLinksAvailable(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), 'gate-link-probe-'));
+  try {
+    symlinkSync(join(probe, 'target'), join(probe, 'link'), 'file');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
+
+/** The set wording of the refusal, with `tool` filled in. */
+function notInstalled(tool: string): string {
+  return `${tool} is not installed in this checkout: run bun install --frozen-lockfile, or bun install --frozen-lockfile --ignore-scripts in a worktree (CONTRIBUTING.md#setup).`;
+}
+
+interface InstallCase {
+  readonly label: string;
+  /** Plants what node_modules/.bin holds for the tool, or nothing. */
+  readonly plant: (entry: string) => void;
+  /** Whether the case needs a symbolic link to a file. */
+  readonly fileLink?: true;
+  readonly installed: boolean;
+}
+
+const INSTALLS: readonly InstallCase[] = [
+  {
+    label: 'a file at the entry bunx reads',
+    plant: (entry: string) => {
+      writeFileSync(entry, '');
+    },
+    installed: true,
+  },
+  {
+    label: 'a link to a file, as bun install writes on Linux and macOS',
+    plant: (entry: string) => {
+      writeFileSync(`${entry}.target`, '');
+      symlinkSync(`${entry}.target`, entry, 'file');
+    },
+    fileLink: true,
+    installed: true,
+  },
+  { label: 'no entry', plant: () => undefined, installed: false },
+  {
+    label: 'a dangling link to a file',
+    plant: (entry: string) => {
+      symlinkSync(`${entry}.removed`, entry, 'file');
+    },
+    fileLink: true,
+    installed: false,
+  },
+  {
+    label: 'a dangling link to a directory',
+    plant: (entry: string) => {
+      symlinkSync(join(cwd, 'removed-package'), entry, WINDOWS ? 'junction' : 'dir');
+    },
+    installed: false,
+  },
+  {
+    label: 'a directory',
+    plant: (entry: string) => {
+      mkdirSync(entry);
+    },
+    installed: false,
+  },
+  {
+    label: 'the other platform form alone',
+    plant: (entry: string) => {
+      writeFileSync(WINDOWS ? entry.slice(0, -'.exe'.length) : `${entry}.exe`, '');
+    },
+    installed: false,
+  },
+];
+
+test.each(INSTALLS.filter((entry) => entry.fileLink !== true || fileLinksAvailable()))(
+  'jsTool with $label',
+  ({ plant, installed }: InstallCase) => {
+    mkdirSync(join(cwd, 'node_modules', '.bin'), { recursive: true });
+    plant(binEntry('prettier'));
+
+    if (installed) {
+      expect(jsTool('prettier')).toEqual([process.execPath, 'x', '--bun', '--no-install', 'prettier']);
+    } else {
+      expect(() => jsTool('prettier')).toThrow(notInstalled('prettier'));
+    }
+  },
+);
+
+test('jsTool reads the tool named and no other', () => {
+  mkdirSync(join(cwd, 'node_modules', '.bin'), { recursive: true });
+  writeFileSync(binEntry('eslint'), '');
+
+  expect(() => jsTool('prettier')).toThrow(notInstalled('prettier'));
+  expect(jsTool('eslint').at(-1)).toBe('eslint');
+});
+
+/* ///// The git environment ///// */
+
+test("git starts with its two config switches and nothing from the caller's environment, in any spelling", async () => {
+  process.env['GIT_DIR'] = join(cwd, 'elsewhere');
+  process.env['git_index_file'] = join(cwd, 'index');
+  process.env['Git_Config_Parameters'] = "'core.fsmonitor=x'";
+  process.env['GATE_DECOY'] = 'decoy';
+
+  await git(['status']);
+
+  const calls = standIns.calls();
+  expect(calls.map((call) => [call.name, ...call.args])).toEqual([['git', 'status']]);
+  const env = calls[0]?.env ?? {};
+  expect(env['GIT_CONFIG_NOSYSTEM']).toBe('1');
+  expect(env['GIT_CONFIG_GLOBAL']).toBe('/dev/null');
+  for (const name of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_CONFIG_PARAMETERS', 'GATE_DECOY']) {
+    expect(spellings(env, name)).toEqual([]);
+  }
+});
+
 /* ///// Tracked env files and node_modules ///// */
 
 // The names Bun 1.4.2 loads from the directory it starts in, written out here
@@ -570,27 +688,7 @@ test('a config for a tool the gate runs with its config named yields no finding,
   expect(await trackedFindings()).toEqual([]);
 });
 
-test('one tracked path under node_modules is a finding that names it', async () => {
-  answerGit(['node_modules/.bin/bun']);
-
-  expect(await trackedFindings()).toEqual([
-    carrying('"node_modules/.bin/bun" is tracked as or under a node_modules directory'),
-  ]);
-});
-
-test('many tracked paths under node_modules, in any case, are one finding naming five and counting the rest', async () => {
-  const paths = [
-    'Node_Modules/zod/index.js',
-    ...[1, 2, 3, 4, 5, 6].map((index) => `node_modules/p${String(index)}.js`),
-  ];
-  answerGit(paths);
-
-  const found = await trackedFindings();
-
-  expect(found).toHaveLength(1);
-  const shown = paths.slice(0, 5).map((path) => JSON.stringify(path));
-  expect(found[0]).toStartWith(`${shown.join(', ')} and 2 more are tracked as or under a node_modules directory`);
-});
+/* ///// node_modules below the root ///// */
 
 test('a node_modules directory on disk below the root is one finding naming each directory once', async () => {
   answerGit([], ['src/node_modules/zod/index.js', 'src/node_modules/zod/package.json', 'tests/deep/Node_Modules/x.js']);
@@ -600,6 +698,14 @@ test('a node_modules directory on disk below the root is one finding naming each
   expect(found).toEqual([
     carrying('"src/node_modules", "tests/deep/Node_Modules" are node_modules directories below the root'),
   ]);
+});
+
+test('a tracked node_modules below the root is a finding while it is on disk, and not once it is gone', async () => {
+  mkdirSync(join(cwd, 'src', 'node_modules', 'zod'), { recursive: true });
+  writeFileSync(join(cwd, 'src', 'node_modules', 'zod', 'index.js'), '');
+  answerGit(['src/node_modules/zod/index.js', 'tests/node_modules/gone.js']);
+
+  expect(await trackedFindings()).toEqual([carrying('"src/node_modules" is a node_modules directory below the root')]);
 });
 
 test('the untracked listing leaves the root node_modules out and nothing below it', async () => {
@@ -625,25 +731,7 @@ test('a tracked env template, or an env file for a mode Bun never loads, yields 
   expect(await trackedFindings()).toEqual([]);
 });
 
-/* ///// Project configs along an extends chain ///// */
-
-test('a tracked tsconfig.json extending a base that sets paths is a finding naming both', async () => {
-  writeFileSync(join(cwd, 'tsconfig.json'), '{ "extends": "./tsconfig.base.json" }');
-  writeFileSync(join(cwd, 'tsconfig.base.json'), '{ "compilerOptions": { "paths": { "x": ["./x.ts"] } } }');
-  answerGit(['tsconfig.json', 'tsconfig.base.json']);
-
-  expect(await trackedFindings()).toEqual([
-    carrying('"tsconfig.json", through "tsconfig.base.json", sets compilerOptions.paths'),
-  ]);
-});
-
-test('a tracked tsconfig.json extending a base that redirects nothing yields no finding, whatever else it sets', async () => {
-  writeFileSync(join(cwd, 'tsconfig.json'), '{ "extends": "./tsconfig.base.json" }');
-  writeFileSync(join(cwd, 'tsconfig.base.json'), '{ "compilerOptions": { "noCheck": true } }');
-  answerGit(['tsconfig.json', 'tsconfig.base.json']);
-
-  expect(await trackedFindings()).toEqual([]);
-});
+/* ///// Project configs ///// */
 
 test('a tsconfig.json outside the paths expected.ts names is a finding, tracked or not', async () => {
   mkdirSync(join(cwd, 'src'));
@@ -658,13 +746,133 @@ test('a tsconfig.json outside the paths expected.ts names is a finding, tracked 
   ]);
 });
 
-test('a tracked tsconfig.json extending scripts/tsconfig.json, which the gate holds, yields no finding', async () => {
-  mkdirSync(join(cwd, 'scripts'));
-  writeFileSync(join(cwd, 'tsconfig.json'), '{ "extends": "./scripts/tsconfig.json" }');
-  writeFileSync(join(cwd, 'scripts', 'tsconfig.json'), '{ "include": ["*.ts"] }');
+test('the project configs expected.ts names and scripts/tsconfig.json yield no finding', async () => {
   answerGit(['tsconfig.json', 'scripts/tsconfig.json']);
 
   expect(await trackedFindings()).toEqual([]);
+});
+
+/* ///// Keys the gate refuses in a tracked JSON file ///// */
+
+/** A backslash, spelled so no formatter decodes the escape it starts. */
+const BACKSLASH = String.fromCharCode(92);
+
+interface KeyCase {
+  readonly label: string;
+  /** Every file the case writes below the working directory, by path. */
+  readonly files: Readonly<Record<string, string>>;
+  /** The paths the index lists. */
+  readonly tracked: readonly string[];
+  /** The paths the untracked listing names. */
+  readonly untracked?: readonly string[];
+  /** A fragment of each finding, in order, or none when the tree passes. */
+  readonly refused: readonly string[];
+}
+
+const KEYS: readonly KeyCase[] = [
+  {
+    label: 'a package.json repeating a top-level key',
+    files: { 'package.json': '{ "patchedDependencies": {}, "name": "a", "patchedDependencies": { "x@1.0.0": "p" } }' },
+    tracked: ['package.json'],
+    refused: [
+      '"package.json" carries a patchedDependencies key',
+      '"package.json" repeats "patchedDependencies" within one object, and Bun reads the first',
+    ],
+  },
+  {
+    label: 'a nested package.json repeating a key inside an object',
+    files: { 'tools/sub/package.json': '{ "scripts": { "a": "x", "a": "y" } }' },
+    tracked: ['tools/sub/package.json'],
+    refused: ['"tools/sub/package.json" repeats "a" within one object'],
+  },
+  {
+    label: 'a key repeated under an escaped spelling',
+    files: {
+      'package.json': `{ "patchedDependencie${BACKSLASH}u0073": {}, "patchedDependencies": {} }`,
+    },
+    tracked: ['package.json'],
+    refused: [
+      '"package.json" carries a patchedDependencies key',
+      '"package.json" repeats "patchedDependencies" within one object',
+    ],
+  },
+  {
+    label: 'a tsconfig.json repeating compilerOptions.paths',
+    files: { 'tsconfig.json': '{ "compilerOptions": { "paths": {}, "paths": { "x": ["./x.ts"] } } }' },
+    tracked: ['tsconfig.json'],
+    refused: ['"tsconfig.json" repeats "paths" within one object'],
+  },
+  {
+    label: 'a base a tsconfig.json extends repeating a key',
+    files: {
+      'tsconfig.json': '{ "extends": "./tsconfig.base" }',
+      'tsconfig.base.json': '{ "compilerOptions": { "baseUrl": ".", "baseUrl": "./src" } }',
+    },
+    tracked: ['tsconfig.json', 'tsconfig.base.json'],
+    refused: ['"tsconfig.json", through "tsconfig.base.json", repeats "baseUrl" within one object'],
+  },
+  {
+    label: 'a package.json that does not parse as plain JSON',
+    files: { 'package.json': '{ "name": "a", }' },
+    tracked: ['package.json'],
+    refused: ['"package.json" does not parse as plain JSON, so which keys it holds is unknown'],
+  },
+  {
+    label: 'a package.json carrying patchedDependencies beside a value nested deeper than jq reads',
+    files: {
+      'package.json': `{ "deep": ${'['.repeat(300)}${']'.repeat(300)}, "patchedDependencies": { "x@1.0.0": "patches/x.patch" } }`,
+    },
+    tracked: ['package.json'],
+    refused: [
+      '"package.json" carries a patchedDependencies key, and bun install applies each patch it names over the package bun.lock pins, so a tool a row runs can change while its pin stays the same. Remove it',
+    ],
+  },
+  {
+    label: 'a nested package.json carrying patchedDependencies, in another case',
+    files: { 'tools/sub/Package.JSON': '{ "patchedDependencies": {} }' },
+    tracked: ['tools/sub/Package.JSON'],
+    refused: ['"tools/sub/Package.JSON" carries a patchedDependencies key'],
+  },
+  {
+    label: 'patchedDependencies below the top of a package.json, or in a tsconfig.json',
+    files: {
+      'package.json': '{ "config": { "patchedDependencies": {} } }',
+      'tsconfig.json': '{ "patchedDependencies": {} }',
+    },
+    tracked: ['package.json', 'tsconfig.json'],
+    refused: [],
+  },
+  {
+    label: 'one key in two objects, and a repeat inside a string',
+    files: {
+      'package.json': `{ "scripts": { "a": "x" }, "config": { "a": "${BACKSLASH}"b${BACKSLASH}": 1, ${BACKSLASH}"b${BACKSLASH}": 2" } }`,
+    },
+    tracked: ['package.json'],
+    refused: [],
+  },
+  {
+    label: 'a package.json on disk that the index does not hold',
+    files: { 'package.json': '{ "a": 1, "a": 2 }' },
+    tracked: [],
+    untracked: ['package.json'],
+    refused: [],
+  },
+  {
+    label: 'an extends naming a package, which the shared commits job refuses',
+    files: { 'tsconfig.json': '{ "extends": "@tsconfig/strictest" }' },
+    tracked: ['tsconfig.json'],
+    refused: [],
+  },
+];
+
+test.each([...KEYS])('$label', async ({ files, tracked, untracked, refused }: KeyCase) => {
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(cwd, path)), { recursive: true });
+    writeFileSync(join(cwd, path), text);
+  }
+  answerGit(tracked, untracked);
+
+  expect(await trackedFindings()).toEqual(refused.map((fragment) => carrying(fragment)));
 });
 
 test.each([
@@ -683,7 +891,7 @@ test('a missing git is a finding', async () => {
   expect(await trackedFindings()).toEqual([carrying('git could not name the work tree it reads: it exited 127')]);
 });
 
-test("git starts with its two config switches and nothing from the gate's environment", async () => {
+test("the preflight's git starts with its two config switches and nothing from the gate's environment", async () => {
   answerGit([]);
   process.env['GIT_DIR'] = join(cwd, 'elsewhere');
   process.env['git_index_file'] = join(cwd, 'index');
@@ -712,7 +920,17 @@ function trackFile(path: string, text: string): void {
   answerGit([path]);
 }
 
-/* ///// Workflow shells ///// */
+/* ///// Workflow names and shells ///// */
+
+// actionlint and zizmor read a workflow by its lowercase .yml name alone.
+test.each(['.github/workflows/ci.yaml', '.github/workflows/CI.YML', '.github/workflows/ci.Yml'])(
+  'a tracked workflow %p outside .github/workflows/<name>.yml is a finding',
+  async (path: string) => {
+    answerGit([path, '.github/workflows/cd.yml']);
+
+    expect(await trackedFindings()).toEqual([carrying(`${JSON.stringify(path)} is a workflow outside`)]);
+  },
+);
 
 /** A workflow whose one job runs one step, with `defaults` and `step` spliced in as written. */
 function workflow(defaults: string, step: string): string {
@@ -793,80 +1011,67 @@ test('a shell outside the workflows directory, or in an untracked workflow, yiel
   expect(await trackedFindings()).toEqual([]);
 });
 
-/* ///// Package patches ///// */
+/* ///// Inline zizmor waivers ///// */
 
-test.each(['package.json', 'tools/sub/package.json'])(
-  'a tracked %p carrying patchedDependencies is a finding naming it',
-  async (path: string) => {
-    trackFile(path, JSON.stringify({ patchedDependencies: { 'prettier@3.9.8': 'patches/prettier.patch' } }));
+interface WaiverCase {
+  readonly label: string;
+  readonly path: string;
+  readonly text: string;
+  readonly tracked: boolean;
+  readonly refused: boolean;
+}
 
-    expect(await trackedFindings()).toEqual([carrying(`${JSON.stringify(path)} carries a patchedDependencies key`)]);
+const WAIVERS: readonly WaiverCase[] = [
+  {
+    label: 'a waiver in a tracked workflow',
+    path: '.github/workflows/ci.yml',
+    text: 'jobs: {} # zizmor: ignore[unpinned-uses]\n',
+    tracked: true,
+    refused: true,
   },
-);
-
-test('an empty patchedDependencies table is a finding too', async () => {
-  trackFile('package.json', '{ "patchedDependencies": {} }');
-
-  expect(await trackedFindings()).toEqual([carrying('"package.json" carries a patchedDependencies key')]);
-});
-
-test('a package.json on disk that the index does not hold is not read for patches', async () => {
-  mkdirSync(join(cwd, 'tools'), { recursive: true });
-  writeFileSync(join(cwd, 'tools', 'package.json'), '{ "patchedDependencies": { "zod@4.6.5": "x.patch" } }');
-  answerGit([], ['tools/package.json']);
-
-  expect(await trackedFindings()).toEqual([]);
-});
-/* ///// What no row checks ///// */
-
-test.each(['dist/helper.js', 'coverage/lcov.info', '.claude/worktrees/wt/src/a.ts', 'Dist/evil.ts', 'COVERAGE/x.md'])(
-  'a tracked %p under a directory the lint and format rows skip is a finding',
-  async (path: string) => {
-    answerGit([path]);
-
-    expect(await trackedFindings()).toEqual(
-      expect.arrayContaining([carrying(`${JSON.stringify(path)} is tracked under`)]) as string[],
-    );
+  {
+    label: 'a waiver in the tracked dependabot.yml',
+    path: '.github/dependabot.yml',
+    text: 'version: 2 # zizmor: ignore[dependabot-cooldown]\n',
+    tracked: true,
+    refused: true,
   },
-);
-
-test.each(['src/dist/a.ts', 'docs/coverage.md', 'distribution/a.ts', '.claude/settings.json'])(
-  'a tracked %p outside those root directories is not refused as under one',
-  async (path: string) => {
-    answerGit([path]);
-
-    expect((await trackedFindings()).filter((finding) => finding.includes('is tracked under'))).toEqual([]);
+  {
+    label: 'a waiver in another case and spacing in a composite action',
+    path: '.github/actions/probe/action.yml',
+    text: 'runs: {} # ZIZMOR : IGNORE [template-injection]\n',
+    tracked: true,
+    refused: true,
   },
-);
+  {
+    label: 'the words outside .github',
+    path: 'docs/notes.md',
+    text: 'A `zizmor: ignore[x]` comment is refused.\n',
+    tracked: true,
+    refused: false,
+  },
+  {
+    label: 'a waiver in an untracked workflow',
+    path: '.github/workflows/ci.yml',
+    text: 'jobs: {} # zizmor: ignore[unpinned-uses]\n',
+    tracked: false,
+    refused: false,
+  },
+];
 
-test.each([
-  'src/helper.jsx',
-  'src/helper.js',
-  'src/helper.mjs',
-  'src/helper.cjs',
-  'src/lie.d.ts',
-  'src/lie.d.mts',
-  'src/lie.d.cts',
-  'src/styles.d.css.ts',
-  'SRC/HELPER.JSX',
-  'tools/commitlint.config.js',
-])('a tracked %p that expected.ts does not name is a finding', async (path: string) => {
-  answerGit([path]);
+test.each([...WAIVERS])('$label', async ({ path, text, tracked, refused }: WaiverCase) => {
+  mkdirSync(dirname(join(cwd, path)), { recursive: true });
+  writeFileSync(join(cwd, path), text);
+  answerGit(tracked ? [path] : [], tracked ? [] : [path]);
 
   expect(await trackedFindings()).toEqual(
-    expect.arrayContaining([
-      carrying(`${JSON.stringify(path)} is JavaScript or a declaration file, which tsc never checks`),
-    ]) as string[],
+    refused ? [carrying(`${JSON.stringify(path)} carries a zizmor ignore comment`)] : [],
   );
 });
 
-test('the JavaScript file expected.ts names, and TypeScript beside it, yield no finding', async () => {
-  answerGit(['commitlint.config.js', 'src/a.ts', 'src/a.tsx', 'src/a.mts', 'src/data.json', 'src/d.ts.md']);
+/* ///// Personal files ///// */
 
-  expect(await trackedFindings()).toEqual([]);
-});
-
-test.each(['.claude/settings.local.json', '.Claude/Settings.Local.json', 'lefthook-local.yml', '.lefthook-local'])(
+test.each(['lefthook-local.yml', '.lefthook-local'])(
   'a tracked personal file %p is a finding, and one on disk alone is not',
   async (path: string) => {
     answerGit([path]);
@@ -874,40 +1079,8 @@ test.each(['.claude/settings.local.json', '.Claude/Settings.Local.json', 'leftho
     standIns.clear();
     answerGit([], [path]);
 
-    expect(tracked).toEqual([carrying(`${JSON.stringify(path)} is `)]);
+    expect(tracked).toEqual([carrying(`${JSON.stringify(path)} is a local lefthook config`)]);
     expect(tracked[0]).toContain('Remove it from the index with git rm --cached');
     expect(await trackedFindings()).toEqual([]);
   },
 );
-
-test.each([
-  ['lefthook-local/notes.md', 'lefthook-local'],
-  ['lefthook-local.d/notes.md', 'lefthook-local.d'],
-  ['.lefthook-local/deep/notes.md', '.lefthook-local'],
-  ['.Lefthook-Local.d/notes.md', '.lefthook-local.d'],
-  ['.claude/settings.local.json/notes.md', '.claude/settings.local.json'],
-])(
-  'a tracked %p, below a personal root name .prettierignore skips, is a finding, and one on disk alone is not',
-  async (path: string, root: string) => {
-    answerGit([path]);
-    const tracked = await trackedFindings();
-    standIns.clear();
-    answerGit([], [path]);
-
-    expect(tracked).toEqual([
-      carrying(`${JSON.stringify(path)} is tracked under ${JSON.stringify(root)}, a name .prettierignore skips`),
-    ]);
-    expect(await trackedFindings()).toEqual([]);
-  },
-);
-
-test.each([
-  'docs/lefthook-local/notes.md',
-  'lefthook-locals/notes.md',
-  '.claude/settings.json',
-  '.claude/other/notes.md',
-])('a tracked %p, below no personal root name, yields no finding', async (path: string) => {
-  answerGit([path]);
-
-  expect(await trackedFindings()).toEqual([]);
-});

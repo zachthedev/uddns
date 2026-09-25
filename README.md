@@ -59,15 +59,14 @@ Using this worker with various Ubiquiti devices and different UniFi software ver
 
 `bun run check` is the gate; [CONTRIBUTING.md](CONTRIBUTING.md#the-gate) says what it covers.
 
-| File                               | Holds                                                                         |
-| ---------------------------------- | ----------------------------------------------------------------------------- |
-| [docs/usage.md](docs/usage.md)     | The API token, the device entry, the URL contract, audit history and refusals |
-| [docs/deploy.md](docs/deploy.md)   | Deploying to your own account, how a release deploys, and operating it        |
-| [docs/faq.md](docs/faq.md)         | The setup mistakes a device or a token makes, each with its fix               |
-| [docs/dev.md](docs/dev.md)         | Prerequisites, the first run, running the worker locally, and generated files |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | The gate, commit messages, where code goes, tests, dependencies and releases  |
-| [SECURITY.md](SECURITY.md)         | What counts as a vulnerability here, and how to report one                    |
-| [CHANGELOG.md](CHANGELOG.md)       | Every release, written by release-please                                      |
+| File                               | Holds                                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------- |
+| [docs/usage.md](docs/usage.md)     | The API token, the device entry, the URL contract, audit history and refusals         |
+| [docs/deploy.md](docs/deploy.md)   | Deploying to your own account, how a release deploys, and operating it                |
+| [docs/faq.md](docs/faq.md)         | The setup mistakes a device or a token makes, each with its fix                       |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to set up, change, check and release this repository, indexed by its own headings |
+| [SECURITY.md](SECURITY.md)         | What counts as a vulnerability here, and how to report one                            |
+| [CHANGELOG.md](CHANGELOG.md)       | Every release, written by release-please                                              |
 
 ## 🙏 **Acknowledgments**
 

@@ -70,10 +70,7 @@ test("CI's gate job starts the gate file itself, not through the script runner",
 test('the push hook starts the gate file itself, in its quick form', () => {
   const jobs = tables(table(yaml('lefthook.yml')['pre-push'], 'pre-push')['jobs'], 'pre-push jobs');
 
-  // The loop ahead of it unsets the variables every Bun reads before its own arguments.
-  expect(step(jobs, 'check')['run']).toBe(
-    `for name in $(env | cut -d= -f1 | grep -ixE 'bun_options|bun_inspect|bun_inspect_connect_to|bun_inspect_preload'); do unset "$name"; done; bun --no-env-file scripts/check.ts --quick`,
-  );
+  expect(step(jobs, 'check')['run']).toBe('bun --no-env-file scripts/check.ts --quick');
 });
 
 // mise-action runs mise in a workspace it trusts, so a pull request's
