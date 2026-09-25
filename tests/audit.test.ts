@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { writeAuditEvents, queryHistory, parseHistoryCursor, type AuditEvent } from '../src/audit';
-import { createMockEnv } from './helpers/mocks';
+import { auditDbOf, createMockEnv, lastBind } from './helpers/mocks';
 
 describe('writeAuditEvents', () => {
   let env: Env;
@@ -8,8 +8,8 @@ describe('writeAuditEvents', () => {
 
   beforeEach(() => {
     env = createMockEnv();
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -36,7 +36,7 @@ describe('writeAuditEvents', () => {
     it('makes no D1 calls when the events array is empty', async () => {
       await writeAuditEvents(env, []);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
+      const auditDbMock = auditDbOf(env);
       expect(auditDbMock.prepare).not.toHaveBeenCalled();
       expect(auditDbMock.batch).not.toHaveBeenCalled();
     });
@@ -56,7 +56,7 @@ describe('writeAuditEvents', () => {
 
       await writeAuditEvents(env, [event]);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
+      const auditDbMock = auditDbOf(env);
       expect(auditDbMock.prepare).toHaveBeenCalledTimes(1);
       expect(auditDbMock.batch).toHaveBeenCalledTimes(1);
 
@@ -78,8 +78,8 @@ describe('writeAuditEvents', () => {
 
       await writeAuditEvents(env, [event]);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       expect(stmtMock.bind).toHaveBeenCalledWith(
         '2024-06-01T12:00:00.000Z',
         'token-id-123',
@@ -97,9 +97,9 @@ describe('writeAuditEvents', () => {
 
       await writeAuditEvents(env, [event]);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
-      const bindArgs = stmtMock.bind.mock.calls.at(-1) as unknown[];
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
+      const bindArgs = lastBind(stmtMock);
       expect(bindArgs[2]).toBeNull(); // callerIp
       expect(bindArgs[5]).toBeNull(); // previousIp
     });
@@ -109,9 +109,9 @@ describe('writeAuditEvents', () => {
 
       await writeAuditEvents(env, [event]);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
-      const bindArgs = stmtMock.bind.mock.calls.at(-1) as unknown[];
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
+      const bindArgs = lastBind(stmtMock);
       expect(bindArgs[7]).toBe('no-change');
     });
   });
@@ -126,7 +126,7 @@ describe('writeAuditEvents', () => {
 
       await writeAuditEvents(env, events);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
+      const auditDbMock = auditDbOf(env);
       const [batchArg] = auditDbMock.batch.mock.calls[0] as [unknown[]];
       expect(batchArg).toHaveLength(2);
     });
@@ -138,14 +138,14 @@ describe('writeAuditEvents', () => {
 
   describe('error handling', () => {
     it('does not throw when AUDIT_DB.batch rejects', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
+      const auditDbMock = auditDbOf(env);
       auditDbMock.batch.mockRejectedValue(new Error('D1 batch failed'));
 
       await expect(writeAuditEvents(env, [makeEvent()])).resolves.toBeUndefined();
     });
 
     it('logs the failure to console.error when batch rejects', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
+      const auditDbMock = auditDbOf(env);
       auditDbMock.batch.mockRejectedValue(new Error('D1 batch failed'));
 
       await writeAuditEvents(env, [makeEvent()]);
@@ -160,7 +160,7 @@ describe('queryHistory', () => {
 
   beforeEach(() => {
     env = createMockEnv();
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -173,8 +173,8 @@ describe('queryHistory', () => {
 
   describe('base query without hostname filter', () => {
     it('returns the rows from AUDIT_DB without the cursor field', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [{ id: 7, hostname: 'test.example.com', outcome: 'updated' }] });
 
       const page = await queryHistory(env, { tokenId: 'tid', hostname: null, limit: 100, before: null });
@@ -185,8 +185,8 @@ describe('queryHistory', () => {
     });
 
     it('binds token_id and one row past the limit when no hostname filter is set', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       await queryHistory(env, { tokenId: 'token-id-123', hostname: null, limit: 50, before: null });
@@ -203,8 +203,8 @@ describe('queryHistory', () => {
 
   describe('hostname filter', () => {
     it('binds token_id, hostname, and the limit when hostname is provided', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       await queryHistory(env, { tokenId: 'token-id-123', hostname: 'test.example.com', limit: 100, before: null });
@@ -213,8 +213,8 @@ describe('queryHistory', () => {
     });
 
     it('uses the unfiltered query when hostname is an empty string', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       await queryHistory(env, { tokenId: 'tid', hostname: '', limit: 100, before: null });
@@ -237,8 +237,8 @@ describe('queryHistory', () => {
       }));
 
     it('reports no cursor when the page is the last', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: rows(2) });
 
       const page = await queryHistory(env, { tokenId: 'tid', hostname: null, limit: 2, before: null });
@@ -248,8 +248,8 @@ describe('queryHistory', () => {
     });
 
     it('reports no cursor when there are no rows at all', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       const page = await queryHistory(env, { tokenId: 'tid', hostname: null, limit: 2, before: null });
@@ -259,8 +259,8 @@ describe('queryHistory', () => {
     });
 
     it('trims the extra row and reports the last row it returned', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: rows(3) });
 
       const page = await queryHistory(env, { tokenId: 'tid', hostname: null, limit: 2, before: null });
@@ -275,8 +275,8 @@ describe('queryHistory', () => {
       // A batch writes several rows in one millisecond, so a page boundary
       // can land inside a group. Excluding the timestamp would drop the rest
       // of that group; including it without the id would repeat it.
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       await queryHistory(env, {
@@ -294,8 +294,8 @@ describe('queryHistory', () => {
       // can land well after the timestamp it carries. Taking the highest id
       // last means a row arriving into a group the walk is still crossing is
       // picked up rather than skipped.
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      auditDbMock.prepare().all.mockResolvedValue({ results: [] });
+      const auditDbMock = auditDbOf(env);
+      auditDbMock.statement.all.mockResolvedValue({ results: [] });
 
       await queryHistory(env, { tokenId: 'tid', hostname: null, limit: 10, before: null });
 
@@ -307,8 +307,8 @@ describe('queryHistory', () => {
       // an operator insert, would otherwise produce a cursor the next
       // request refuses, and the walk would die on a 422 blaming the caller
       // for a value the server handed it.
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      auditDbMock.prepare().all.mockResolvedValue({
+      const auditDbMock = auditDbOf(env);
+      auditDbMock.statement.all.mockResolvedValue({
         results: [
           { id: 1, occurred_at: '2026-08-06 00:00:00', hostname: 'a.example.com' },
           { id: 2, occurred_at: '2026-08-06 00:00:00', hostname: 'b.example.com' },
@@ -324,8 +324,8 @@ describe('queryHistory', () => {
     it('applies the cursor inside the tenant scope', async () => {
       // A cursor is caller-supplied, so it must never be able to reach past
       // the token filter into another tenant's rows.
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      auditDbMock.prepare().all.mockResolvedValue({ results: [] });
+      const auditDbMock = auditDbOf(env);
+      auditDbMock.statement.all.mockResolvedValue({ results: [] });
 
       await queryHistory(env, { tokenId: 'tid', hostname: null, limit: 10, before: { occurredAt: 'x', id: 1 } });
 
@@ -391,8 +391,8 @@ describe('queryHistory', () => {
       // reject as a type mismatch.
       ['falls back to the default when the value is not a number', Number.NaN, 101],
     ])('%s', async (_label, limit, bound) => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       await queryHistory(env, { tokenId: 'tid', hostname: null, limit, before: null });

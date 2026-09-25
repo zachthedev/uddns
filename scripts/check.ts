@@ -212,6 +212,10 @@ const TEST_ENV: Readonly<Record<string, string>> = { CI: 'true' };
  * it, where Node's clients do not. Behind a proxy, wrangler's type generation
  * and vitest's workers pool then cannot reach the workerd they start. Windows
  * reads one name in any case, so both spellings there read one value.
+ *
+ * Deviates from the handbook: the Bun kickstart's rows set no NO_PROXY. The
+ * package.json test scripts add the same names, and CONTRIBUTING.md#setup
+ * records why.
  */
 export function loopbackUnproxied(): Readonly<Record<string, string>> {
   const own = [process.env['NO_PROXY'], process.env['no_proxy']].filter(
@@ -318,6 +322,9 @@ const WRANGLER_CONFIG = 'wrangler.jsonc';
 // ignore rule names it. --no-ext-diff, so a diff.external from the
 // environment cannot answer for it. A wrangler that fails leaves the file
 // deleted, so the row restores the tracked copy before it goes red.
+// Deviates from the handbook: the Bun kickstart's gate has no wrangler row.
+// The Worker's bindings are typed from wrangler.jsonc, and wrangler types runs
+// the build command that file names, so this is a code row.
 export async function cfTypegen(): Promise<undefined> {
   const tracked = await run(['git', 'ls-files', '--error-unmatch', '--', TYPES], gitEnv());
   if (tracked.exitCode !== 0) {
@@ -779,7 +786,9 @@ export function vitestCount(finished: Finished, allowed: number = VITEST_SKIPS_A
 // vitest with its config named, because vitest reads a vitest.config.ts ahead
 // of vitest.config.mts, and a vite.config.* after both. CI=true makes vitest
 // refuse `.only`, which would otherwise run alone and report the rest as
-// skipped.
+// skipped. Deviates from the handbook: the Bun kickstart's test row runs bun
+// test. The Worker's tests run inside workerd through @cloudflare/vitest-plugin,
+// which runs under vitest alone.
 async function test(): Promise<string> {
   const finished = await run(
     [BUN, NO_ENV_FILE, join(PACKAGES, 'vitest/vitest.mjs'), 'run', '--coverage', '--config', VITEST_CONFIG],

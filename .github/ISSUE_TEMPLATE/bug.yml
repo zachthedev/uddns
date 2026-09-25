@@ -74,7 +74,7 @@ body:
       description: >
         The gateway model and the UniFi OS and Network Application versions, when a device sends the
         request. Write none for a direct caller.
-      placeholder: 'UDM Pro, UniFi OS 4.2.12, Network 9.3.45'
+      placeholder: 'Your gateway model, UniFi OS version and Network application version'
     validations:
       required: true
   - type: textarea

@@ -1,56 +1,59 @@
-name: CI
+name: ci
 
-permissions: {}
-
+# Everything that judges a pull request: the gate on three platforms, the secret scan, the commit
+# messages, the workflow linters and the advisory check. The three shared jobs call the reusable
+# workflows in zachthedev/.github, pinned by commit with the release's version beside the pin.
+# Renovate's zachthedev group moves the pin.
 on:
-  # Every pull request, whatever it targets. A stacked pull request is based on
-  # the layer below it rather than on main, and filtering by base branch leaves
-  # each middle layer reviewed with no checks against it.
+  # Every pull request, whatever it targets. A stacked pull request is based on the layer
+  # below it, and a base filter would leave each middle layer with no checks.
   pull_request:
   push:
     branches: [main]
 
-# The four pins keep jdx/mise-action's own mise commands to mise.toml. The
-# gate starts every mise command it runs with these and the rest of its own
-# environment, never with the job's.
+permissions: {}
+
+# The four pins keep jdx/mise-action's own mise commands to mise.toml. The gate starts every mise
+# command it runs with these and the rest of its own environment, never with the job's.
 env:
   MISE_OVERRIDE_CONFIG_FILENAMES: mise.toml
   MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES: none
   MISE_ENV: ''
   MISE_AUTO_ENV: 'false'
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  # The gate a contributor runs locally, called and never restated, so the two
-  # cannot drift. bun run check:rows prints what it covers. Its tools row
-  # asserts mise.lock against mise.toml and then installs, in that order by
-  # construction. No step here names a token, so the gate's zizmor runs
-  # offline, and zizmor's online audits run in the workflows job below.
+  # The gate a contributor runs locally, called and never restated. bun run check:rows prints
+  # what it covers. Its tools row asserts mise.lock against mise.toml and then installs, in that
+  # order by construction. No step here names a token, so the gate's zizmor runs offline, and
+  # zizmor's online audits run in the workflows job below.
   gate:
-    name: gate
     strategy:
       # One platform failing still reports the others.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     permissions:
       contents: read
-
     steps:
-      # Before the checkout, because the action runs mise --version and mise ls
-      # in a workspace it trusts, and a pull request's mise.toml would load
-      # there before the gate refuses it. mise alone, verified against the
-      # release's signed checksums, and its bin directory stays on PATH.
-      # install: false, because the gate asserts mise.lock before it installs
-      # from it. cache: false for the same reason: nothing restored ahead of the
-      # assertions. github_token: '', because a locked install makes no GitHub
-      # API request, and the default exports the job token as MISE_GITHUB_TOKEN
-      # to every later step. env: false and export_path: false, so nothing
-      # mise.toml sets reaches a later step: the gate runs each tool by the path
-      # mise which prints.
-      - name: Setup mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      # Before the checkout, because the action runs mise --version and mise ls in a workspace it
+      # trusts, and a pull request's mise.toml would load there before the gate refuses it.
+      # mise alone, verified against the release's signed checksums, and its bin directory stays
+      # on PATH. install: false, because the gate asserts mise.lock before it installs from it.
+      # cache: false for the same reason: nothing restored ahead of the assertions.
+      # github_token: '', because a locked install of a tool mise's registry routes, as the four
+      # the gate pins are, makes no GitHub API request, and the default exports the job token as
+      # MISE_GITHUB_TOKEN to every later step. env: false and export_path: false, because the
+      # defaults write the output of mise env --json to GITHUB_ENV and mise's PATH entries to
+      # GITHUB_PATH. add_shims_to_path: false, so a tool mise.toml pins never shadows a program
+      # the gate starts by name. The trust and MISE_YES the action exports reach no mise the
+      # gate starts, which takes its whole environment from the gate.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.9.11
           install: false
@@ -58,56 +61,44 @@ jobs:
           github_token: ''
           env: false
           export_path: false
-
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          add_shims_to_path: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # packageManager in package.json is the one Bun pin. The action verifies no download, so
+      # that pin plus the cooldown is the control.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          # Pinned to packageManager, so a bun release cannot change what these
-          # checks mean without a commit that says so.
           bun-version-file: package.json
+      # --ignore-scripts: no package's install script runs before the gate. The gate needs none,
+      # and no hook runs here.
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # The gate by its file, not through bun run, so no node_modules/.bin sits ahead of PATH
+      # before the gate's first check refuses a tracked node_modules path. --no-env-file, as every
+      # start of the gate has, so no env file on disk sets a variable in it.
+      - run: bun --no-env-file scripts/check.ts
 
-      # --ignore-scripts, so nothing in the tree runs before the gate: the
-      # root's prepare installs git hooks, which CI never runs, and a
-      # dependency's install script only checks or relinks a native binary the
-      # gate's tools find without it.
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      # The file itself, not `bun run check`: the script runner puts the
-      # checkout's node_modules/.bin ahead of PATH, where a committed bun would
-      # run in place of the gate, and the gate refuses a tracked node_modules
-      # path before any row. --no-env-file, as every start of the gate has, so
-      # no env file on disk sets a variable in it.
-      - name: Verify
-        run: bun --no-env-file scripts/check.ts
-
-  # Runs in CI alone: the scan needs the pull request's base and head commits
-  # and the official action, which no working machine has. GitHub push
-  # protection covers provider patterns; trufflehog adds its own detectors and
-  # live verification.
+  # Deviates from the handbook's kickstart, which has no secret scan. The handbook's Gate section
+  # allows a check that cannot run locally, with its reason here. The scan needs the pull request's
+  # base and head commits and the official action, which no working machine has. The working tree
+  # holds real Cloudflare credentials in the gitignored .dev.vars and .env.local. GitHub push
+  # protection covers provider patterns, and trufflehog adds its own detectors and verifies a
+  # found credential live. The branch ruleset requires this check by name.
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-
       # No base or head input: the action then scans the pull request's
       # base..head commits, or a push's before..after. A branch name as base
       # does not resolve in a pull request checkout, and the scan reads nothing.
-      - name: Scan for secrets
-        uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6 # v3.97.5
+      - uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6 # v3.97.5
         with:
           path: ./
           # The action runs the scanner from a Docker image tagged with this
@@ -115,24 +106,23 @@ jobs:
           # the action's own script, so the image is pinned here by digest.
           version: 3.97.5@sha256:1cec88f18ca39e26e04e61fe9d886c9c4e5f2fc0ba4f2ed185cac0722bd8a076
 
-  # The three shared checks, called from zachthedev/.github at a release SHA. Each header
-  # names its inputs; the pin moves through Renovate's zachthedev group with no cooldown.
+  # A called workflow's job gets at most what its caller grants here, so each job grants what
+  # the called job's header declares: a checkout and the read-only audits, nothing more.
   commits:
-    uses: zachthedev/.github/.github/workflows/commits.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
     permissions:
       contents: read
+    uses: zachthedev/.github/.github/workflows/commits.yml@09a9a00aae657ea11e5d5979ef3ce5859d9aba3a # v0.2.0
 
   workflows:
-    uses: zachthedev/.github/.github/workflows/workflows.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
     permissions:
       contents: read
+    uses: zachthedev/.github/.github/workflows/workflows.yml@09a9a00aae657ea11e5d5979ef3ce5859d9aba3a # v0.2.0
 
   # Blocks on what a pull request adds against its base, and on what a release adds against
-  # the last tag, at high severity. Under Bun it sees the exactly pinned direct packages and
-  # the actions, not bun.lock's transitives; the audit workflow reports on those daily.
-  # allow-ghsas stays empty; a waiver is a GHSA id here with a comment naming the advisory,
-  # what it blocks, why shipping is safer and what removes it (CONTRIBUTING.md#dependencies).
+  # the last tag, at high severity. A waived advisory is passed as `with: allow-ghsas:` here,
+  # with a comment beside it naming the advisory, what it blocks, why shipping is safer and the
+  # condition that removes it.
   dependency-review:
-    uses: zachthedev/.github/.github/workflows/dependency-review.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
     permissions:
       contents: read
+    uses: zachthedev/.github/.github/workflows/dependency-review.yml@09a9a00aae657ea11e5d5979ef3ce5859d9aba3a # v0.2.0

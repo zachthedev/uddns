@@ -4,13 +4,21 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 import prettierConfig from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
+// typescript-eslint reads types through the TypeScript 6.x compiler API, which the native TypeScript 7 compiler
+// does not expose, so the `typescript` package it resolves stays on 6.x beside the `@typescript/native` alias the
+// typecheck row runs.
 export default defineConfig(
+  // flat config reads no .gitignore, so every ignored directory a lint could
+  // reach is named here, the worktrees Claude Code writes included.
+  // Deviates from the handbook's kickstart: wrangler writes its bundles and dev
+  // state under .wrangler, and generates worker-configuration.d.ts opening with
+  // an unlimited eslint-disable, so both are ignored here too.
   globalIgnores([
     'node_modules/**',
-    '.wrangler/**',
     'coverage/**',
     'dist/**',
     '.claude/worktrees/**',
+    '.wrangler/**',
     'worker-configuration.d.ts',
   ]),
 
@@ -55,7 +63,7 @@ export default defineConfig(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['commitlint.config.js', 'eslint.config.ts', 'vitest.config.mts'],
+          allowDefaultProject: ['commitlint.config.js'],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -114,19 +122,10 @@ export default defineConfig(
     },
   },
 
-  // Relaxed rules for tests (mocking needs escape hatches)
+  // Tests
   {
     files: ['tests/**/*.ts'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-empty-function': 'off',
-      '@typescript-eslint/explicit-function-return-type': 'off',
-      '@typescript-eslint/strict-boolean-expressions': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -146,16 +145,18 @@ export default defineConfig(
   },
 
   // commitlint.config.js sits outside every tsconfig project, and the typecheck
-  // row checks eslint.config.ts and vitest.config.mts through
-  // tests/tsconfig.json; lint all three without type information.
+  // row checks eslint.config.ts; lint both without type information.
+  // Deviates from the handbook's kickstart: vitest.config.mts, the Worker
+  // tests' config, sits outside the root project too, and the typecheck row
+  // checks it through tests/tsconfig.json, so it is linted the same way.
   {
     files: ['commitlint.config.js', 'eslint.config.ts', 'vitest.config.mts'],
     extends: [tseslint.configs.disableTypeChecked],
   },
 
-  // commitlint.config.js is shared byte for byte across repositories and uses
-  // URL as the global Node provides, so the global is declared here rather
-  // than imported there.
+  // commitlint.config.js is byte-identical in every repository and reads the
+  // URL global Node and Bun both provide, so the global is declared here
+  // rather than imported there.
   {
     files: ['commitlint.config.js'],
     languageOptions: {

@@ -387,7 +387,7 @@ describe('RefusalCounter guards', () => {
     const exhausted = new Error('storage exhausted');
 
     await runInDurableObject(counter, async (instance, state) => {
-      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       const clock = vi.spyOn(Date, 'now').mockReturnValue(BEFORE_THE_EPOCH);
       const write = vi.spyOn(state.storage.kv, 'put').mockImplementation(() => {
         throw exhausted;
@@ -397,7 +397,7 @@ describe('RefusalCounter guards', () => {
         expect(write).toHaveBeenCalledOnce();
         expect(logged).toHaveBeenCalledExactlyOnceWith(
           expect.stringContaining('alarm'),
-          expect.objectContaining({ message: expect.stringMatching(/setAlarm/) }),
+          expect.objectContaining({ message: expect.stringMatching(/setAlarm/) as string }),
         );
       } finally {
         write.mockRestore();
@@ -419,7 +419,7 @@ describe('RefusalCounter guards', () => {
     const stuck = new Error('delete failed');
 
     await runInDurableObject(counter, async (instance, state) => {
-      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       const clock = vi.spyOn(Date, 'now').mockReturnValue(BEFORE_THE_EPOCH);
       const cleanup = vi.spyOn(state.storage.kv, 'delete').mockImplementation(() => {
         throw stuck;

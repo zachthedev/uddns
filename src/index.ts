@@ -306,7 +306,7 @@ function failureRank({ status }: { status: number }): number {
   return status < 500 ? 2 : 4;
 }
 
-interface UpdateResponseBody {
+export interface UpdateResponseBody {
   success: boolean;
   message: string;
   data: {
@@ -315,7 +315,7 @@ interface UpdateResponseBody {
   };
 }
 
-interface HistoryResponseBody {
+export interface HistoryResponseBody {
   success: boolean;
   data: {
     events: Record<string, unknown>[];
@@ -326,7 +326,7 @@ interface HistoryResponseBody {
   };
 }
 
-interface ErrorResponseBody {
+export interface ErrorResponseBody {
   success: false;
   error: string;
   /** Present only when the failure came from a batch of records. */

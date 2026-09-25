@@ -78,7 +78,7 @@ Cloudflare resources follow `<type>-<project>-<purpose>-<env>`: `kv-uddns-cache-
 The D1 name comes from `wrangler.jsonc` and follows the convention on its own. A KV namespace wrangler
 creates on a first deploy is titled `uddns-ddns-kv`, its `<worker>-<binding>` default, and the
 convention-named title is applied by renaming in the dashboard; titles are cosmetic, and wrangler matches
-on the binding name. The production worker is named `uddns` and is served at `ddns.quist.network`.
+on the binding name. The maintainer's production worker is named `uddns` and is served at a custom domain.
 
 ## Releasing deploys
 
@@ -108,8 +108,8 @@ pull request is the owner's act.
 - Logs are Workers Logs with the query string redacted, because it carries the caller's ntfy topic and
   the hostnames it manages. The handler logs every request the rate limiter admits and its outcome; a
   flood the limiter turns away writes no line.
-- The `audit` workflow runs `bun audit` over the whole lock file once a day, and zizmor's online audits
-  over the pinned actions once a week. A red run is a report, never a check: it means work to pick up, a
+- The `audit` workflow runs `bun audit` over the whole lock file, and zizmor's online audits over the
+  pinned actions, once a day. A red run is a report, never a check: it means work to pick up, a
   direct bump through Renovate's next security fix or a transitive one by hand. Between an advisory
   landing and a fix, the worker runs vulnerable code, and that run is the only thing that says so.
   Somebody has to read it.

@@ -1,50 +1,55 @@
 name: cd
 
 # Everything after a merge. A push to main keeps the release pull request open, and merging that
-# pull request makes the next push tag the merge commit and draft the release. publish flips the
-# draft public under the release environment's reviewer, and the deploy follows the flip, so the
-# schema in production corresponds to a revision anyone can check out. A manual run deploys a
-# revision without releasing one.
+# pull request makes the next push tag the merge commit and draft the release. This repository
+# ships no artifact, so publish attaches nothing and flips the draft public under the release
+# environment's reviewer.
 #
-# No job here runs the gate. What keeps a red tree off main is the main ruleset's required
-# checks, which name the gate and the shared checks a pull request reports, and what keeps a tag
-# off any other commit is the tag ruleset with the releaser app as its one bypass actor. Both are
-# repository settings, not steps, so a manual run of a revision main does not carry is the
-# owner's act and nothing here re-checks it.
+# No job here runs the gate. What keeps a red tree off main is the branch ruleset's required
+# checks, and what keeps a tag off any other commit is the tag ruleset with the releaser app as
+# its one bypass actor. Both are repository settings, not steps.
+#
+# The deploy job follows the flip, so the schema in production corresponds to a revision anyone
+# can check out.
 on:
   push:
     branches: [main]
+  # Deviates from the handbook's kickstart, whose cd.yml runs on a push alone. A manual run
+  # deploys without a release: a fork's first deploy, where the releaser app's environment is
+  # absent and release-pr fails, and a rollback to an older tag (docs/deploy.md#operating-it).
   workflow_dispatch:
 
 permissions: {}
 
 jobs:
-  # The called job runs in the release-pr environment and mints its token from that
-  # environment's RELEASER_CLIENT_ID and RELEASER_PRIVATE_KEY. This job runs in no environment, so
-  # it cannot pass an environment secret by name; inherit is the one form that reaches it.
+  # The called job names the release-pr environment, so its variable and secret resolve from
+  # this repository's environment of that name. This job runs in no environment, so it cannot
+  # pass an environment secret by name. inherit is the one form that reaches it. Every
+  # credential the called job uses is the app's, so the job token gets nothing.
   release-pr:
+    # Deviates from the handbook's kickstart, whose release-pr job has no condition. A manual run
+    # deploys alone, so this job runs on a push.
     if: github.event_name == 'push'
     # On the job, not the workflow: two pushes in a row must not race over the release pull
     # request, and cancel-in-progress would abandon a half-written one.
     concurrency:
       group: release-main
       cancel-in-progress: false
-    uses: zachthedev/.github/.github/workflows/release-pr.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
+    permissions: {}
+    uses: zachthedev/.github/.github/workflows/release-pr.yml@09a9a00aae657ea11e5d5979ef3ce5859d9aba3a # v0.2.0
     secrets: inherit
 
-  # uddns ships no artifact, so artifacts is omitted and the called job flips the draft public
-  # and nothing else. The release environment's required reviewer is the human approval before a
-  # release goes public.
+  # After a release was drafted. The calling job grants what the called job declares, the
+  # attestation scopes included, because the declaration is static and the attest step is
+  # skipped with no artifacts. No secret: the job uses the job token alone.
   publish:
     needs: release-pr
     if: needs.release-pr.outputs.released == 'true'
-    uses: zachthedev/.github/.github/workflows/publish.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
-    # The three the callee's header asks for. id-token and attestations serve the attest step,
-    # which an artifact-less call skips, and a called job refuses a caller passing less.
     permissions:
       contents: write
       id-token: write
       attestations: write
+    uses: zachthedev/.github/.github/workflows/publish.yml@09a9a00aae657ea11e5d5979ef3ce5859d9aba3a # v0.2.0
     with:
       tag: ${{ needs.release-pr.outputs.tag }}
       flip: true

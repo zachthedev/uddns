@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, setDefaultTimeout, test } from 'bun:test';
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -354,13 +353,17 @@ test.each([...ALLOWED])('%p is refused neither as a mise file nor as a program n
 test.each([PINS, LOCK])('the pinned file %p is allowed spelled in upper case', async (name: string) => {
   writeFiles();
   const upper = name.toUpperCase();
-  // Where the filesystem opens either spelling, the
-  // pinned file itself takes the upper-case name.
-  if (existsSync(upper)) {
+  // The exclusive create fails where the filesystem opens either spelling,
+  // and there the pinned file itself takes the upper-case name.
+  try {
+    writeFileSync(upper, '', { flag: 'wx' });
+  } catch (error: unknown) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) {
+      throw error;
+    }
     renameSync(name, upper);
-  } else {
-    writeFileSync(upper, '');
   }
+  expect(readdirSync('.')).toContain(upper);
 
   expect(await findings()).toEqual([]);
 });

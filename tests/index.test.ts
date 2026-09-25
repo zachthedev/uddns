@@ -1,16 +1,33 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import worker, { HttpError } from '../src/index';
+import worker, {
+  HttpError,
+  type ErrorResponseBody,
+  type HistoryResponseBody,
+  type UpdateResponseBody,
+} from '../src/index';
 import {
+  auditDbOf,
   createMockCloudflareClient,
   createMockEnv,
   createMockRequest,
   createMockCtx,
   createAuthHeader,
   createBearerHeader,
+  kvOf,
+  lastBind,
   mockPage,
+  rateLimiterOf,
+  refusalsOf,
   wireStandardHappyPath,
 } from './helpers/mocks';
 import { Cloudflare } from 'cloudflare';
+import type { RecordListParams } from 'cloudflare/resources/dns/records';
+
+/** An error response from a batch that failed part way, which carries what it did. */
+type BatchFailureBody = ErrorResponseBody & { data: NonNullable<ErrorResponseBody['data']> };
+
+/** The record list call the worker makes, which always names the record. */
+type RecordListCall = RecordListParams & Required<Pick<RecordListParams, 'name'>>;
 
 // vi.mock factories are hoisted above import declarations, so any class or
 // variable the factory references must be created inside vi.hoisted() so it
@@ -135,13 +152,13 @@ describe('Worker fetch handler', () => {
     ({ ctx, waitUntil: waitUntilMock } = createMockCtx());
     mockCloudflareClient = createMockCloudflareClient();
 
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     // vitest 4: constructor mocks must be `function`/class form, not arrows
     vi.mocked(Cloudflare).mockImplementation(function () {
-      return mockCloudflareClient as any;
+      return mockCloudflareClient as unknown as Cloudflare;
     });
   });
 
@@ -163,10 +180,10 @@ describe('Worker fetch handler', () => {
     it('logs the path and puts no query string on any console sink', async () => {
       // Every sink, not just the one the handler uses today: the property
       // is that the topic never reaches logs, whichever call emits it.
-      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest(
@@ -181,7 +198,7 @@ describe('Worker fetch handler', () => {
       // enumerable, and Workers Logs records both.
       const emitted = JSON.stringify(
         [...logSpy.mock.calls, ...errorSpy.mock.calls, ...warnSpy.mock.calls].map((args) =>
-          args.map((arg) => (arg instanceof Error ? { message: arg.message, stack: arg.stack } : arg)),
+          args.map((arg: unknown) => (arg instanceof Error ? { message: arg.message, stack: arg.stack } : arg)),
         ),
       );
       expect(emitted).not.toContain('secret-topic-9f3a');
@@ -200,10 +217,10 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     it('allows the request when RATE_LIMITER returns success:true', async () => {
-      const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
+      const rateLimiterMock = rateLimiterOf(env);
       rateLimiterMock.limit.mockResolvedValue({ success: true });
 
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -217,7 +234,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('returns 429 with rate-limit error body when RATE_LIMITER returns success:false', async () => {
-      const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
+      const rateLimiterMock = rateLimiterOf(env);
       rateLimiterMock.limit.mockResolvedValue({ success: false });
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -227,12 +244,12 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(429);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Rate limit exceeded.' });
     });
 
     it('does not call parseAuthorization or tokens.verify when rate limited', async () => {
-      const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
+      const rateLimiterMock = rateLimiterOf(env);
       rateLimiterMock.limit.mockResolvedValue({ success: false });
 
       // No Authorization header: if auth ran first it would return 401, not 429
@@ -247,8 +264,8 @@ describe('Worker fetch handler', () => {
     it('writes no request log line when rate limited', async () => {
       // Invocation logs are off, so this line is the only thing a request
       // could write. A flood the limiter turns away must not buy one each.
-      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const rateLimiterMock = rateLimiterOf(env);
       rateLimiterMock.limit.mockResolvedValue({ success: false });
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com');
@@ -260,10 +277,10 @@ describe('Worker fetch handler', () => {
     });
 
     it('uses the CF-Connecting-IP header as the rate limit key', async () => {
-      const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
+      const rateLimiterMock = rateLimiterOf(env);
       rateLimiterMock.limit.mockResolvedValue({ success: true });
 
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -276,7 +293,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('uses "unknown" as the rate limit key when CF-Connecting-IP is absent', async () => {
-      const rateLimiterMock = vi.mocked(env.RATE_LIMITER) as any;
+      const rateLimiterMock = rateLimiterOf(env);
       rateLimiterMock.limit.mockResolvedValue({ success: false });
 
       // createMockRequest adds a default CF-Connecting-IP; build the request
@@ -298,7 +315,7 @@ describe('Worker fetch handler', () => {
 
   describe('Auth parsing', () => {
     it('accepts Basic credentials and constructs SDK with apiToken only (no apiEmail)', async () => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -312,11 +329,13 @@ describe('Worker fetch handler', () => {
       expect(response.status).toBe(400);
       expect(vi.mocked(Cloudflare)).toHaveBeenCalledWith(expect.objectContaining({ apiToken: 'valid-token' }));
       // apiEmail must never be passed
-      expect(vi.mocked(Cloudflare)).not.toHaveBeenCalledWith(expect.objectContaining({ apiEmail: expect.anything() }));
+      expect(vi.mocked(Cloudflare)).not.toHaveBeenCalledWith(
+        expect.objectContaining({ apiEmail: expect.anything() as unknown }),
+      );
     });
 
     it('accepts Basic credentials with a non-email username (username is ignored for auth)', async () => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -330,7 +349,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('accepts Bearer raw-token and constructs SDK with that token directly', async () => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -349,7 +368,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Authorization required.',
@@ -364,7 +383,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Authorization required.' });
     });
 
@@ -376,7 +395,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Invalid authorization credentials.' });
     });
 
@@ -388,7 +407,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Invalid authorization credentials.' });
     });
 
@@ -400,7 +419,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Invalid authorization credentials.',
@@ -415,7 +434,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Invalid authorization credentials.',
@@ -430,7 +449,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Invalid authorization credentials.',
@@ -445,7 +464,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Invalid authorization credentials.',
@@ -460,7 +479,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Invalid authorization credentials.',
@@ -515,7 +534,7 @@ describe('Worker fetch handler', () => {
         order.push('verify');
         return Promise.reject(new MockAuthenticationError());
       });
-      (vi.mocked(env.DDNS_KV) as any).get.mockImplementation(() => {
+      kvOf(env).get.mockImplementation(() => {
         order.push('kv');
         return Promise.resolve(null);
       });
@@ -543,10 +562,8 @@ describe('Worker fetch handler', () => {
       const storage = new Map([
         [victimKey, JSON.stringify({ ip: '203.0.113.77', updatedAt: '2024-01-01T00:00:00.000Z' })],
       ]);
-      (vi.mocked(env.DDNS_KV) as any).get.mockImplementation((key: string) =>
-        Promise.resolve(storage.get(key) ?? null),
-      );
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'attacker-token', status: 'active' } as any);
+      kvOf(env).get.mockImplementation((key: string) => Promise.resolve(storage.get(key) ?? null));
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'attacker-token', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=203.0.113.77&hostnames=vpn.example.com', {
@@ -557,13 +574,13 @@ describe('Worker fetch handler', () => {
 
       // A correct IP guess must not come back as the cached-and-current 200.
       expect(response.status).toBe(400);
-      expect((vi.mocked(env.DDNS_KV) as any).get).toHaveBeenCalledWith('ip:attacker-token:vpn.example.com:A');
-      expect((vi.mocked(env.DDNS_KV) as any).get).not.toHaveBeenCalledWith(victimKey);
+      expect(kvOf(env).get).toHaveBeenCalledWith('ip:attacker-token:vpn.example.com:A');
+      expect(kvOf(env).get).not.toHaveBeenCalledWith(victimKey);
     });
 
     it('passes through when ACCESS_KEY is empty (open mode)', async () => {
       env.ACCESS_KEY = '';
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -580,7 +597,7 @@ describe('Worker fetch handler', () => {
 
     it('allows Basic request when ACCESS_KEY matches the Basic username', async () => {
       env.ACCESS_KEY = 'secret-key';
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -597,7 +614,7 @@ describe('Worker fetch handler', () => {
 
     it('allows Bearer request when ACCESS_KEY matches the X-Access-Key header', async () => {
       env.ACCESS_KEY = 'secret-key';
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -623,7 +640,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Access denied.' });
       // Gate fires before tokens.verify, so Cloudflare is never called for verify
       expect(mockCloudflareClient.user.tokens.verify).not.toHaveBeenCalled();
@@ -640,7 +657,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Access denied.' });
       expect(mockCloudflareClient.user.tokens.verify).not.toHaveBeenCalled();
     });
@@ -654,7 +671,7 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
     });
 
     it.each([
@@ -673,7 +690,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toContain("Provide 'ip4' and/or 'ip6'");
     });
 
@@ -703,8 +720,8 @@ describe('Worker fetch handler', () => {
         }),
       );
       mockCloudflareClient.dns.records.update.mockResolvedValue(undefined);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
-      (vi.mocked(env.DDNS_KV) as any).put.mockResolvedValue(undefined);
+      kvOf(env).get.mockResolvedValue(null);
+      kvOf(env).put.mockResolvedValue(undefined);
 
       // CF-Connecting-IP is an IPv6 address: ip4=auto slot is silently skipped,
       // ip6=auto slot picks up the address.
@@ -713,7 +730,7 @@ describe('Worker fetch handler', () => {
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       // Only AAAA record was constructed and updated
@@ -732,7 +749,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "Missing IP. Provide 'ip4' and/or 'ip6'; 'auto' uses the client IP.",
@@ -763,7 +780,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "The 'ip4' parameter must be a valid IPv4 address.",
@@ -781,7 +798,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "The 'ip6' parameter must be a valid IPv6 address.",
@@ -796,7 +813,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "Missing IP. Provide 'ip4' and/or 'ip6'; 'auto' uses the client IP.",
@@ -811,7 +828,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "Missing 'hostnames' parameter.",
@@ -826,7 +843,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'No hostnames provided.',
@@ -848,7 +865,7 @@ describe('Worker fetch handler', () => {
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       // Refused for having no matching record, not for its size.
       expect(response.status).toBe(400);
@@ -868,12 +885,12 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: `Too many DNS records: ${String(records)} requested, 40 allowed per request. Each hostname counts once per IP family.`,
       });
-      expect((vi.mocked(env.DDNS_KV) as any).get).not.toHaveBeenCalled();
+      expect(kvOf(env).get).not.toHaveBeenCalled();
     });
 
     it('collapses a repeated hostname into one record', async () => {
@@ -881,14 +898,14 @@ describe('Worker fetch handler', () => {
       // update call and files its own audit row for one logical change.
       const hostnames = Array.from({ length: 30 }, () => 'test.example.com').join(',');
       wireStandardHappyPath(mockCloudflareClient);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
+      kvOf(env).get.mockResolvedValue(null);
 
       const request = createMockRequest(`https://example.com/update?ip4=1.2.3.5&hostnames=${hostnames}`, {
         headers: validAuth,
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       expect(body.data.records).toHaveLength(1);
@@ -914,7 +931,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toBe("The 'ip4' parameter must be a valid IPv4 address.");
     });
 
@@ -958,7 +975,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toBe("The 'ip6' parameter must be a valid IPv6 address.");
     });
 
@@ -981,7 +998,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       // Refused later for having no zones, never for the address itself.
       expect(response.status).toBe(400);
@@ -1015,14 +1032,14 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       expect(mockCloudflareClient.dns.records.update).toHaveBeenCalledWith(
         'r1',
         expect.objectContaining({ content: canonical }),
       );
-      expect(body.data.records[0].ip).toBe(canonical);
+      expect(body.data.records[0]?.ip).toBe(canonical);
     });
 
     it('treats a differently spelled but identical address as no change', async () => {
@@ -1045,7 +1062,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       expect(body.data.updated).toBe(false);
@@ -1068,7 +1085,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toContain('Not a valid hostname');
       // The echoed name is re-encoded, so a newline cannot break the line.
       expect(body.error).not.toContain('\n');
@@ -1091,7 +1108,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       // Refused later for having no zones, never for its shape.
       expect(body.error).not.toContain('Not a valid hostname');
@@ -1108,9 +1125,9 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toContain('exceeds 253 characters');
-      expect((vi.mocked(env.DDNS_KV) as any).get).not.toHaveBeenCalled();
+      expect(kvOf(env).get).not.toHaveBeenCalled();
     });
 
     // The zone parameter is held to the same shape as a hostname. It reaches
@@ -1132,7 +1149,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toContain('Not a valid zone name');
       // The echoed value is re-encoded, so a newline cannot break the line.
       expect(body.error).not.toContain('\n');
@@ -1221,15 +1238,15 @@ describe('Worker fetch handler', () => {
         }),
       );
       mockCloudflareClient.dns.records.update.mockResolvedValue(undefined);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
-      (vi.mocked(env.DDNS_KV) as any).put.mockResolvedValue(undefined);
+      kvOf(env).get.mockResolvedValue(null);
+      kvOf(env).put.mockResolvedValue(undefined);
 
       const request = createMockRequest('https://example.com/update?ip6=2001:db8::1&hostnames=test.example.com', {
         headers: validAuth,
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       expect(body.data.records).toHaveLength(1);
@@ -1290,8 +1307,8 @@ describe('Worker fetch handler', () => {
           }),
         );
       mockCloudflareClient.dns.records.update.mockResolvedValue(undefined);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
-      (vi.mocked(env.DDNS_KV) as any).put.mockResolvedValue(undefined);
+      kvOf(env).get.mockResolvedValue(null);
+      kvOf(env).put.mockResolvedValue(undefined);
 
       const request = createMockRequest(
         'https://example.com/update?ip4=1.2.3.4&ip6=2001:db8::1&hostnames=h1.example.com,h2.example.com',
@@ -1301,7 +1318,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       // 2 A records + 2 AAAA records = 4 entries
@@ -1320,7 +1337,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: "The 'ntfy' parameter is too long." });
     });
 
@@ -1335,7 +1352,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: "The 'ntfy' parameter must be a valid https URL." });
     });
 
@@ -1348,7 +1365,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: "The 'ntfy' parameter must be a valid https URL." });
     });
 
@@ -1375,7 +1392,7 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     it('accepts an active token', async () => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -1389,7 +1406,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('rejects an inactive token', async () => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'expired' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'expired' });
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
         headers: validAuth,
@@ -1398,7 +1415,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Authentication failed: token expired',
@@ -1412,7 +1429,7 @@ describe('Worker fetch handler', () => {
       ['an empty id', { id: '', status: 'active' }],
       ['a non-string id', { id: 12345, status: 'active' }],
     ])('returns 401 when tokens.verify returns %s', async (_label, verification) => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue(verification as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue(verification);
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
         headers: validAuth,
@@ -1421,7 +1438,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Authentication failed: token has no identity.',
@@ -1439,7 +1456,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Authentication failed: invalid token.' });
     });
 
@@ -1453,7 +1470,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Authentication failed: invalid token.' });
     });
 
@@ -1467,7 +1484,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(401);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Authentication failed: invalid token.' });
     });
 
@@ -1482,7 +1499,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(500);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Internal Server Error' });
     });
 
@@ -1496,7 +1513,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(500);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Internal Server Error' });
     });
   });
@@ -1509,13 +1526,13 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
     });
 
     // Gate OFF (ACCESS_KEY = ''): verify runs first, then fast-path check.
     it('skips zone listing and returns 200 when ALL records match their cached IPs (gate off)', async () => {
       env.ACCESS_KEY = '';
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       // Cache contains a JSON entry with matching IP
       kvMock.get.mockResolvedValue(JSON.stringify({ ip: '1.2.3.4', updatedAt: '2024-01-01T00:00:00.000Z' }));
 
@@ -1526,7 +1543,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: true,
         message: 'No IP change detected',
@@ -1544,7 +1561,7 @@ describe('Worker fetch handler', () => {
     // Gate ON (ACCESS_KEY non-empty): fast-path check runs before verify.
     it('stops at the token check when ALL records match cached IPs (gate on)', async () => {
       env.ACCESS_KEY = 'gate-key';
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(JSON.stringify({ ip: '1.2.3.4', updatedAt: '2024-01-01T00:00:00.000Z' }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -1554,7 +1571,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: true,
         message: 'No IP change detected',
@@ -1571,7 +1588,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('uses cache key ip:<tokenId>:<hostname>:<type>', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockResolvedValue(undefined);
 
@@ -1600,7 +1617,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('writes JSON {ip, updatedAt} to KV with expirationTtl 2592000', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockResolvedValue(undefined);
 
@@ -1633,7 +1650,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('treats malformed cached JSON as a cache miss and proceeds', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue('not-json-at-all');
 
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
@@ -1650,7 +1667,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('treats a cached entry with a non-string ip as a miss and proceeds', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       // Valid JSON, but ip is not a string (a corrupt or partial cache write).
       kvMock.get.mockResolvedValue(JSON.stringify({ ip: 12345, updatedAt: '2024-01-01T00:00:00.000Z' }));
 
@@ -1668,7 +1685,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('treats a KV read error as a cache miss and proceeds', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockRejectedValue(new Error('KV read error'));
 
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
@@ -1684,7 +1701,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('returns 200 and DNS update still succeeds when KV put throws', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockRejectedValue(new Error('KV write error'));
 
@@ -1711,7 +1728,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('proceeds to update when cached IP differs from requested IP', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(JSON.stringify({ ip: '1.2.3.3', updatedAt: '2024-01-01T00:00:00.000Z' }));
 
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
@@ -1727,7 +1744,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('proceeds to update when no cache entry exists', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
 
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [] }));
@@ -1742,7 +1759,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('handles partial cache: cached hostname skipped, pending hostname fetches DNS', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       // First hostname cached and matching; second hostname not cached
       kvMock.get
         .mockResolvedValueOnce(JSON.stringify({ ip: '1.2.3.4', updatedAt: '2024-01-01T00:00:00.000Z' }))
@@ -1769,7 +1786,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       // Both hostnames appear in the result
@@ -1777,7 +1794,7 @@ describe('Worker fetch handler', () => {
       // Only the non-cached hostname triggered a DNS lookup
       expect(mockCloudflareClient.dns.records.list).toHaveBeenCalledTimes(1);
       // The cached entry appears as updated:false
-      const cachedEntry = (body.data.records as any[]).find((r: any) => r.hostname === 'h1.example.com');
+      const cachedEntry = body.data.records.find((r) => r.hostname === 'h1.example.com');
       expect(cachedEntry).toMatchObject({ hostname: 'h1.example.com', updated: false });
     });
   });
@@ -1790,7 +1807,7 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' });
     });
 
     // Well-formed JSON arrays whose elements are not zones. Trusting any of
@@ -1807,7 +1824,7 @@ describe('Worker fetch handler', () => {
         ],
       ],
     ])('treats a cached zone array with %s as a miss', async (_label, cached) => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockImplementation((key: string) =>
         Promise.resolve(key.startsWith('zones:') ? JSON.stringify(cached) : null),
       );
@@ -1830,8 +1847,8 @@ describe('Worker fetch handler', () => {
     });
 
     it('stops walking zone pages at the ceiling instead of spending unbounded subrequests', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockResolvedValue(undefined);
       // 1200 zones on the token, ceiling is 1000. The hosting zone sits past
@@ -1856,7 +1873,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('calls zones.list and queues a zones cache write when zones cache is a miss', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       // All gets return null: ip cache miss and zones cache miss
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockResolvedValue(undefined);
@@ -1886,7 +1903,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('skips zones.list when zones cache is a hit and uses the cached zone for record lookup', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       const cachedZones = [{ id: 'zone-from-cache', name: 'example.com' }];
 
       // Zones cache hit, ip cache miss
@@ -1919,7 +1936,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('treats malformed zones JSON as a cache miss and falls back to zones.list', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockImplementation((key: string) => {
         if (key === 'zones:token-id-123') return Promise.resolve('not-valid-json');
         return Promise.resolve(null);
@@ -1944,7 +1961,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('treats a non-array zones JSON value as a cache miss and falls back to zones.list', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockImplementation((key: string) => {
         if (key === 'zones:token-id-123') return Promise.resolve(JSON.stringify({ id: 'z', name: 'x' }));
         return Promise.resolve(null);
@@ -1968,7 +1985,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('writes zones cache with expirationTtl 300 via waitUntil', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockResolvedValue(undefined);
 
@@ -2008,17 +2025,15 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' } as any);
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' });
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
     });
 
     /** The hostname lists handed to the caller's own counter instance. */
     const refusalCalls = (): string[][] => {
       // getByName hands back the same stub per token, so read that stub once
       // rather than collecting across every call that returned it.
-      const stub = (
-        (vi.mocked(env.REFUSALS) as any).getByName as (id: string) => { add: { mock: { calls: [string, string[]][] } } }
-      )('token-id-123');
+      const stub = refusalsOf(env).getByName('token-id-123');
       return stub.add.mock.calls.map(([, hostnames]) => hostnames);
     };
 
@@ -2061,7 +2076,7 @@ describe('Worker fetch handler', () => {
       await settle();
 
       expect(counted()).toBe(6);
-      expect((vi.mocked(env.REFUSALS) as any).getByName).toHaveBeenCalledWith('token-id-123');
+      expect(refusalsOf(env).getByName).toHaveBeenCalledWith('token-id-123');
     });
 
     it('loses nothing when a burst is followed by silence', async () => {
@@ -2096,7 +2111,7 @@ describe('Worker fetch handler', () => {
       await settle();
 
       const history = createMockRequest('https://example.com/history', { headers: validAuth });
-      const body = (await (await worker.fetch(history, env, ctx)).json()) as any;
+      const body = await (await worker.fetch(history, env, ctx)).json<HistoryResponseBody>();
 
       // The names come back too: the caller owns every hostname in the
       // list, and seeing which ones were refused is what makes the tally
@@ -2158,13 +2173,13 @@ describe('Worker fetch handler', () => {
       await worker.fetch(request, env, ctx);
       await settle();
 
-      expect((vi.mocked(env.DDNS_KV) as any).put).toHaveBeenCalledWith('zones:token-id-123', '[]', {
+      expect(kvOf(env).put).toHaveBeenCalledWith('zones:token-id-123', '[]', {
         expirationTtl: 60,
       });
       // Written, not merely attempted. KV refuses a TTL under 60 and the
       // worker swallows the refusal, so asserting the call alone would pass
       // against a cache that never exists.
-      await expect((vi.mocked(env.DDNS_KV) as any).get('zones:token-id-123')).resolves.toBe('[]');
+      await expect(kvOf(env).get('zones:token-id-123')).resolves.toBe('[]');
     });
 
     it('reads the empty zone list back rather than walking the API again', async () => {
@@ -2207,7 +2222,7 @@ describe('Worker fetch handler', () => {
 
       const response = await worker.fetch(request, env, ctx);
       await settle();
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       expect(response.status).toBe(status);
       expect(body.error).toContain(fragment);
@@ -2226,7 +2241,7 @@ describe('Worker fetch handler', () => {
       // The tally is otherwise readable only through /history, which is
       // scoped to the very token being counted, so a prober would be the
       // only party who could see it.
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       outsideAuthority();
 
       // 40 fresh names per request, so the 100-distinct threshold falls
@@ -2251,7 +2266,7 @@ describe('Worker fetch handler', () => {
       // The reason the threshold counts distinct names. A DDNS client polls
       // every two minutes, so one hostname typed wrong passes any total
       // given an afternoon, and the alert would fire on a typo forever.
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       outsideAuthority();
 
       for (let poll = 0; poll < 200; poll++) {
@@ -2270,7 +2285,9 @@ describe('Worker fetch handler', () => {
     it('does not count a permission failure from the Cloudflare API', async () => {
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
       mockCloudflareClient.dns.records.list.mockImplementation(() => ({
-        then: (_r: any, reject: any) => reject(new MockPermissionDeniedError()),
+        then: (_resolve: unknown, reject: (reason: unknown) => void) => {
+          reject(new MockPermissionDeniedError());
+        },
       }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=a.example.com', {
@@ -2291,7 +2308,9 @@ describe('Worker fetch handler', () => {
       // event, not the caller overreaching.
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
       mockCloudflareClient.dns.records.list.mockImplementation(() => ({
-        then: (_r: any, reject: any) => reject(new MockAuthenticationError()),
+        then: (_resolve: unknown, reject: (reason: unknown) => void) => {
+          reject(new MockAuthenticationError());
+        },
       }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=a.example.com', {
@@ -2300,7 +2319,7 @@ describe('Worker fetch handler', () => {
 
       const response = await worker.fetch(request, env, ctx);
       await settle();
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       expect(response.status).toBe(401);
       expect(body.error).toBe('Authentication failed: invalid token.');
@@ -2312,7 +2331,9 @@ describe('Worker fetch handler', () => {
       // Cloudflare being unreachable.
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
       mockCloudflareClient.dns.records.list.mockImplementation(() => ({
-        then: (_r: any, reject: any) => reject(new MockInternalServerError()),
+        then: (_resolve: unknown, reject: (reason: unknown) => void) => {
+          reject(new MockInternalServerError());
+        },
       }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=a.example.com', {
@@ -2328,7 +2349,7 @@ describe('Worker fetch handler', () => {
 
     it('does not count anything when every record succeeds', async () => {
       wireStandardHappyPath(mockCloudflareClient);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
+      kvOf(env).get.mockResolvedValue(null);
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.5&hostnames=test.example.com', {
         headers: validAuth,
@@ -2359,7 +2380,7 @@ describe('Worker fetch handler', () => {
 
       await refuseOnce();
 
-      expect((vi.mocked(env.DDNS_KV) as any).delete).not.toHaveBeenCalledWith('zones:token-id-123');
+      expect(kvOf(env).delete).not.toHaveBeenCalledWith('zones:token-id-123');
     });
 
     it('walks the zone list once however long a hostname stays misspelled', async () => {
@@ -2380,7 +2401,7 @@ describe('Worker fetch handler', () => {
       // never looked for rather than reached for. Counting it would put the
       // largest legitimate accounts in the tally, which is the population
       // the alert exists to exclude.
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       const zones = Array.from({ length: 1200 }, (_unused, i) => ({
         id: `zone${String(i)}`,
         name: `z${String(i)}.example.net`,
@@ -2437,7 +2458,7 @@ describe('Worker fetch handler', () => {
       );
       const response = await worker.fetch(request, env, ctx);
       await settle();
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       expect(response.status).toBe(400);
       expect(body.error).toContain("outside the zone requested with 'zone='");
@@ -2445,7 +2466,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('does not fail the request when the counter is unreachable', async () => {
-      (vi.mocked(env.REFUSALS) as any).getByName.mockImplementation(() => {
+      refusalsOf(env).getByName.mockImplementation(() => {
         throw new Error('Durable Object unavailable');
       });
       outsideAuthority();
@@ -2461,14 +2482,14 @@ describe('Worker fetch handler', () => {
     });
 
     it('reports zero rather than failing when the counter cannot be read', async () => {
-      (vi.mocked(env.REFUSALS) as any).getByName.mockImplementation(() => {
+      refusalsOf(env).getByName.mockImplementation(() => {
         throw new Error('Durable Object unavailable');
       });
 
       const request = createMockRequest('https://example.com/history', { headers: validAuth });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<HistoryResponseBody>();
 
       expect(response.status).toBe(200);
       expect(body.data.refusedToday).toEqual({ total: 0, distinct: 0, hostnames: [] });
@@ -2478,8 +2499,8 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
+      kvOf(env).get.mockResolvedValue(null);
     });
 
     it('queries only the zone that could host the hostname and updates there', async () => {
@@ -2582,7 +2603,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toContain('No matching record found');
       // A zone that cannot contain the hostname costs no API call at all.
       expect(mockCloudflareClient.dns.records.list).not.toHaveBeenCalled();
@@ -2674,7 +2695,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toContain('Multiple matching records found');
       expect(mockCloudflareClient.dns.records.update).not.toHaveBeenCalled();
     });
@@ -2727,7 +2748,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "Zone 'notmine.com' not available with current permissions.",
@@ -2744,7 +2765,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'No zones available with current permissions.',
@@ -2766,7 +2787,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "No matching record found for 'test.example.com'. Create it manually first.",
@@ -2807,7 +2828,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "Multiple matching records found for 'test.example.com'. Specify a unique hostname per zone.",
@@ -2864,9 +2885,9 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' } as any);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
-      (vi.mocked(env.DDNS_KV) as any).put.mockResolvedValue(undefined);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' });
+      kvOf(env).get.mockResolvedValue(null);
+      kvOf(env).put.mockResolvedValue(undefined);
     });
 
     it('successfully updates a single DNS record and returns the correct shape', async () => {
@@ -2902,7 +2923,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: true,
         message: 'DNS records updated successfully',
@@ -2949,7 +2970,7 @@ describe('Worker fetch handler', () => {
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       expect(body.message).toBe('DNS records already current');
@@ -2958,7 +2979,7 @@ describe('Worker fetch handler', () => {
       // Update must not have been called
       expect(mockCloudflareClient.dns.records.update).not.toHaveBeenCalled();
       // Cache is still written even on a no-op
-      expect((vi.mocked(env.DDNS_KV) as any).put).toHaveBeenCalled();
+      expect(kvOf(env).put).toHaveBeenCalled();
       // No change: pushNtfy must NOT be called at all
       expect(pushNtfyMock).not.toHaveBeenCalled();
     });
@@ -3028,7 +3049,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
       expect(body.data.records).toHaveLength(2);
 
       expect(mockCloudflareClient.dns.records.update).toHaveBeenCalledTimes(2);
@@ -3120,9 +3141,9 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' } as any);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
-      (vi.mocked(env.DDNS_KV) as any).put.mockResolvedValue(undefined);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' });
+      kvOf(env).get.mockResolvedValue(null);
+      kvOf(env).put.mockResolvedValue(undefined);
     });
 
     it('calls ctx.waitUntil at least once with a Promise when a record reaches the DNS API', async () => {
@@ -3152,7 +3173,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('does NOT call ctx.waitUntil on the cache fast-path (nothing touched)', async () => {
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(JSON.stringify({ ip: '1.2.3.4', updatedAt: '2024-01-01T00:00:00.000Z' }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -3172,7 +3193,7 @@ describe('Worker fetch handler', () => {
       const pushNtfyMock = vi.mocked(pushNtfy);
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
       // good.example.com resolves and changes; missing.example.com does not exist.
-      mockCloudflareClient.dns.records.list.mockImplementation((params: any) =>
+      mockCloudflareClient.dns.records.list.mockImplementation((params: RecordListCall) =>
         params.name.exact === 'good.example.com'
           ? mockPage({
               result: [{ id: 'r1', name: 'good.example.com', type: 'A', content: '1.2.3.0', proxied: false, ttl: 1 }],
@@ -3192,7 +3213,7 @@ describe('Worker fetch handler', () => {
 
       // The request is still refused: one hostname could not be updated.
       expect(response.status).toBe(400);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
       expect(body.error).toContain("No matching record found for 'missing.example.com'");
 
       // The DNS change that did land was applied, so it must be recorded.
@@ -3204,11 +3225,11 @@ describe('Worker fetch handler', () => {
       const waitUntilArgs = (waitUntilMock.mock.calls as [Promise<void>][]).map(([p]) => p);
       await Promise.allSettled(waitUntilArgs);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
+      const auditDbMock = auditDbOf(env);
       expect(auditDbMock.batch).toHaveBeenCalledTimes(1);
       const [batchArg] = auditDbMock.batch.mock.calls[0] as [unknown[]];
       expect(batchArg).toHaveLength(1);
-      expect(auditDbMock.prepare().bind).toHaveBeenCalledWith(
+      expect(auditDbMock.statement.bind).toHaveBeenCalledWith(
         expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         'token-id-123',
         '5.6.7.8',
@@ -3225,7 +3246,7 @@ describe('Worker fetch handler', () => {
       // A caller that reads only the status would otherwise conclude
       // nothing changed while its sibling record was repointed.
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
-      mockCloudflareClient.dns.records.list.mockImplementation((params: any) =>
+      mockCloudflareClient.dns.records.list.mockImplementation((params: RecordListCall) =>
         params.name.exact === 'good.example.com'
           ? mockPage({
               result: [{ id: 'r1', name: 'good.example.com', type: 'A', content: '1.2.3.0', proxied: false, ttl: 1 }],
@@ -3242,7 +3263,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<BatchFailureBody>();
 
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
@@ -3271,9 +3292,13 @@ describe('Worker fetch handler', () => {
       // later 400. A 5xx is also what a DDNS client retries against, so
       // the caller would loop on a permanent misconfiguration.
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
-      mockCloudflareClient.dns.records.list.mockImplementation((params: any) => {
+      mockCloudflareClient.dns.records.list.mockImplementation((params: RecordListCall) => {
         if (params.name.exact === 'aaa.example.com') {
-          return { then: (_r: any, reject: any) => reject(new MockInternalServerError()) };
+          return {
+            then: (_resolve: unknown, reject: (reason: unknown) => void) => {
+              reject(new MockInternalServerError());
+            },
+          };
         }
         return mockPage({ result: [] });
       });
@@ -3286,7 +3311,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<BatchFailureBody>();
 
       expect(response.status).toBe(400);
       expect(body.error).toContain("No matching record found for 'zzz.example.com'");
@@ -3333,7 +3358,9 @@ describe('Worker fetch handler', () => {
       const Failure = failures[errorName] ?? MockInternalServerError;
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
       mockCloudflareClient.dns.records.list.mockImplementation(() => ({
-        then: (_r: any, reject: any) => reject(new Failure()),
+        then: (_resolve: unknown, reject: (reason: unknown) => void) => {
+          reject(new Failure());
+        },
       }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=a.example.com', {
@@ -3341,7 +3368,7 @@ describe('Worker fetch handler', () => {
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<BatchFailureBody>();
 
       expect(body.data.failed).toEqual([{ hostname: 'a.example.com', type: 'A', status, error: message }]);
       // The status too, not only the per-record list. A body that says 429
@@ -3368,8 +3395,10 @@ describe('Worker fetch handler', () => {
       const First = failures[firstName] ?? MockInternalServerError;
       const Second = failures[secondName] ?? MockInternalServerError;
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
-      mockCloudflareClient.dns.records.list.mockImplementation((params: any) => ({
-        then: (_r: any, reject: any) => reject(params.name.exact === 'first.example.com' ? new First() : new Second()),
+      mockCloudflareClient.dns.records.list.mockImplementation((params: RecordListCall) => ({
+        then: (_resolve: unknown, reject: (reason: unknown) => void) => {
+          reject(params.name.exact === 'first.example.com' ? new First() : new Second());
+        },
       }));
 
       const request = createMockRequest(
@@ -3380,7 +3409,7 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<BatchFailureBody>();
 
       expect(response.status).toBe(status);
       // Whichever lost still reports its own verdict, so a client that
@@ -3391,7 +3420,9 @@ describe('Worker fetch handler', () => {
     it('returns 500 when every failure is a transport error', async () => {
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
       mockCloudflareClient.dns.records.list.mockImplementation(() => ({
-        then: (_r: any, reject: any) => reject(new MockInternalServerError()),
+        then: (_resolve: unknown, reject: (reason: unknown) => void) => {
+          reject(new MockInternalServerError());
+        },
       }));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=a.example.com', {
@@ -3399,7 +3430,7 @@ describe('Worker fetch handler', () => {
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
 
       expect(response.status).toBe(500);
       expect(body).toEqual({
@@ -3414,7 +3445,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('logs every failure in a batch, not only the one it reports', async () => {
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       mockCloudflareClient.zones.list.mockReturnValue(mockPage({ result: [{ id: 'zone1', name: 'example.com' }] }));
       mockCloudflareClient.dns.records.list.mockReturnValue(mockPage({ result: [] }));
 
@@ -3448,7 +3479,7 @@ describe('Worker fetch handler', () => {
       const waitUntilArgs = (waitUntilMock.mock.calls as [Promise<void>][]).map(([p]) => p);
       await Promise.allSettled(waitUntilArgs);
       // Nothing reached DNS, so there is nothing to audit.
-      expect((vi.mocked(env.AUDIT_DB) as any).batch).not.toHaveBeenCalled();
+      expect(auditDbOf(env).batch).not.toHaveBeenCalled();
     });
 
     it('passes one correctly-shaped audit event to AUDIT_DB.batch per record that reached DNS', async () => {
@@ -3475,7 +3506,7 @@ describe('Worker fetch handler', () => {
       const waitUntilArgs = (waitUntilMock.mock.calls as [Promise<void>][]).map(([p]) => p);
       await Promise.allSettled(waitUntilArgs);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
+      const auditDbMock = auditDbOf(env);
       expect(auditDbMock.batch).toHaveBeenCalledTimes(1);
 
       // batch receives an array of bound statements; one per record
@@ -3483,7 +3514,7 @@ describe('Worker fetch handler', () => {
       expect(batchArg).toHaveLength(1);
 
       // The statement was bound with the correct field values
-      const stmtMock = auditDbMock.prepare();
+      const stmtMock = auditDbMock.statement;
       expect(stmtMock.bind).toHaveBeenCalledWith(
         expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), // occurredAt ISO string
         'token-id-123', // tokenId from verify response
@@ -3519,10 +3550,10 @@ describe('Worker fetch handler', () => {
       const waitUntilArgs = (waitUntilMock.mock.calls as [Promise<void>][]).map(([p]) => p);
       await Promise.allSettled(waitUntilArgs);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       // Last positional argument to bind is the outcome
-      const bindArgs = stmtMock.bind.mock.calls.at(-1) as unknown[];
+      const bindArgs = lastBind(stmtMock);
       expect(bindArgs[7]).toBe('no-change');
     });
 
@@ -3549,9 +3580,9 @@ describe('Worker fetch handler', () => {
       const waitUntilArgs = (waitUntilMock.mock.calls as [Promise<void>][]).map(([p]) => p);
       await Promise.allSettled(waitUntilArgs);
 
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
-      const bindArgs = stmtMock.bind.mock.calls.at(-1) as unknown[];
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
+      const bindArgs = lastBind(stmtMock);
       // previousIp is the 6th positional bind arg (index 5).
       expect(bindArgs[5]).toBeNull();
     });
@@ -3565,7 +3596,7 @@ describe('Worker fetch handler', () => {
     const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
     beforeEach(() => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' });
     });
 
     it.each([
@@ -3579,13 +3610,13 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(200);
-      const bindArgs = (vi.mocked(env.AUDIT_DB) as any).prepare().bind.mock.calls.at(-1) as unknown[];
+      const bindArgs = lastBind(auditDbOf(env).statement);
       expect(Number.isInteger(bindArgs.at(-1))).toBe(true);
     });
 
     it('carries the cursor and the tally on the first page', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      auditDbMock.prepare().all.mockResolvedValue({
+      const auditDbMock = auditDbOf(env);
+      auditDbMock.statement.all.mockResolvedValue({
         results: Array.from({ length: 3 }, (_unused, i) => ({
           id: i + 1,
           occurred_at: `2026-08-06T00:00:00.00${String(i)}Z`,
@@ -3593,7 +3624,7 @@ describe('Worker fetch handler', () => {
       });
 
       const request = createMockRequest('https://example.com/history?limit=2', { headers: validAuth });
-      const body = (await (await worker.fetch(request, env, ctx)).json()) as any;
+      const body = await (await worker.fetch(request, env, ctx)).json<HistoryResponseBody>();
 
       expect(body.data.cursor).toBe('2026-08-06T00:00:00.001Z|2');
       expect(body.data.refusedToday).toEqual({ total: 0, distinct: 0, hostnames: [] });
@@ -3603,16 +3634,16 @@ describe('Worker fetch handler', () => {
       // The tally describes the day, not the page. Repeating it down a walk
       // would spend one Durable Object round trip per page to say the same
       // thing.
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      auditDbMock.prepare().all.mockResolvedValue({ results: [] });
+      const auditDbMock = auditDbOf(env);
+      auditDbMock.statement.all.mockResolvedValue({ results: [] });
 
       const request = createMockRequest('https://example.com/history?before=2026-08-06T00%3A00%3A01.000Z%7C2', {
         headers: validAuth,
       });
-      const body = (await (await worker.fetch(request, env, ctx)).json()) as any;
+      const body = await (await worker.fetch(request, env, ctx)).json<HistoryResponseBody>();
 
       expect(body.data.refusedToday).toBeNull();
-      expect((vi.mocked(env.REFUSALS) as any).getByName).not.toHaveBeenCalled();
+      expect(refusalsOf(env).getByName).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -3624,7 +3655,7 @@ describe('Worker fetch handler', () => {
       const request = createMockRequest(`https://example.com/history?${query}`, { headers: validAuth });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       expect(response.status).toBe(422);
       expect(body.error).toContain('Not a valid hostname');
@@ -3646,7 +3677,7 @@ describe('Worker fetch handler', () => {
       const request = createMockRequest('https://example.com/history?before=garbage', { headers: validAuth });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<ErrorResponseBody>();
 
       expect(response.status).toBe(422);
       expect(body.error).toContain("'before' parameter must be a cursor");
@@ -3655,7 +3686,7 @@ describe('Worker fetch handler', () => {
     it('reports at most fifty refused names however many the counter holds', async () => {
       // The counter keeps up to 200 of up to 253 characters, which would put
       // 50 KiB of them on a response whose point is the audit rows.
-      const stub = (vi.mocked(env.REFUSALS) as any).getByName('token-id-123');
+      const stub = refusalsOf(env).getByName('token-id-123');
       stub.tally.mockResolvedValue({
         total: 400,
         distinct: 200,
@@ -3663,17 +3694,17 @@ describe('Worker fetch handler', () => {
       });
 
       const request = createMockRequest('https://example.com/history', { headers: validAuth });
-      const body = (await (await worker.fetch(request, env, ctx)).json()) as any;
+      const body = await (await worker.fetch(request, env, ctx)).json<HistoryResponseBody>();
 
-      expect(body.data.refusedToday.hostnames).toHaveLength(50);
+      expect(body.data.refusedToday?.hostnames).toHaveLength(50);
       // The true count still reaches the caller, so a truncated list never
       // reads as the whole story.
-      expect(body.data.refusedToday.distinct).toBe(200);
+      expect(body.data.refusedToday?.distinct).toBe(200);
     });
 
     it('returns 200 with events array using default limit of 100', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({
         results: [{ hostname: 'test.example.com', outcome: 'updated' }],
       });
@@ -3683,7 +3714,7 @@ describe('Worker fetch handler', () => {
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
@@ -3695,8 +3726,8 @@ describe('Worker fetch handler', () => {
     });
 
     it('respects an explicit limit parameter', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       const request = createMockRequest('https://example.com/history?limit=25', {
@@ -3709,8 +3740,8 @@ describe('Worker fetch handler', () => {
     });
 
     it('clamps limit to 1000 when the provided value exceeds the maximum', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       const request = createMockRequest('https://example.com/history?limit=9999', {
@@ -3723,8 +3754,8 @@ describe('Worker fetch handler', () => {
     });
 
     it('clamps limit to 1 when the provided value is less than 1', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       const request = createMockRequest('https://example.com/history?limit=0', {
@@ -3737,8 +3768,8 @@ describe('Worker fetch handler', () => {
     });
 
     it('falls back to default limit when limit param is non-numeric', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       const request = createMockRequest('https://example.com/history?limit=banana', {
@@ -3751,8 +3782,8 @@ describe('Worker fetch handler', () => {
     });
 
     it('filters by hostname when the hostname query param is provided', async () => {
-      const auditDbMock = vi.mocked(env.AUDIT_DB) as any;
-      const stmtMock = auditDbMock.prepare();
+      const auditDbMock = auditDbOf(env);
+      const stmtMock = auditDbMock.statement;
       stmtMock.all.mockResolvedValue({ results: [] });
 
       const request = createMockRequest('https://example.com/history?hostname=test.example.com', {
@@ -3774,7 +3805,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(405);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Method not allowed.' });
     });
 
@@ -3786,7 +3817,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(404);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({ success: false, error: 'Not found.' });
       expect(mockCloudflareClient.user.tokens.verify).not.toHaveBeenCalled();
     });
@@ -3808,7 +3839,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, createMockEnv(), createMockCtx().ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "Missing IP. Provide 'ip4' and/or 'ip6'; 'auto' uses the client IP.",
@@ -3825,7 +3856,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, createMockEnv(), createMockCtx().ctx);
 
       expect(response.status).toBe(500);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Internal Server Error',
@@ -3833,7 +3864,7 @@ describe('Worker fetch handler', () => {
     });
 
     it('maps Cloudflare API errors to 500', async () => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
       mockCloudflareClient.zones.list.mockRejectedValue(new Error('API rate limit exceeded'));
 
       const request = createMockRequest('https://example.com/update?ip4=1.2.3.4&hostnames=test.example.com', {
@@ -3843,7 +3874,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, createMockEnv(), createMockCtx().ctx);
 
       expect(response.status).toBe(500);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: 'Internal Server Error',
@@ -3851,9 +3882,9 @@ describe('Worker fetch handler', () => {
     });
 
     it('success responses do not include a previousIp field', async () => {
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' } as any);
-      (vi.mocked(env.DDNS_KV) as any).get.mockResolvedValue(null);
-      (vi.mocked(env.DDNS_KV) as any).put.mockResolvedValue(undefined);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'tid', status: 'active' });
+      kvOf(env).get.mockResolvedValue(null);
+      kvOf(env).put.mockResolvedValue(undefined);
 
       mockCloudflareClient.zones.list.mockReturnValue(
         mockPage({
@@ -3872,7 +3903,7 @@ describe('Worker fetch handler', () => {
       });
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(body.data).not.toHaveProperty('previousIp');
     });
@@ -3888,12 +3919,12 @@ describe('Worker fetch handler', () => {
       const pushNtfyMock = vi.mocked(pushNtfy);
       const validAuth = { Authorization: createAuthHeader('user@example.com', 'token') };
 
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       // Old KV entry with different IP (cache miss by IP value)
       kvMock.get.mockResolvedValue(JSON.stringify({ ip: '1.2.3.4', updatedAt: '2024-01-01T00:00:00.000Z' }));
       kvMock.put.mockResolvedValue(undefined);
 
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(
         mockPage({
           result: [{ id: 'zone1', name: 'example.com' }],
@@ -3923,7 +3954,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: true,
         message: 'DNS records updated successfully',
@@ -3954,7 +3985,7 @@ describe('Worker fetch handler', () => {
       const { pushNtfy } = await import('../src/pushNtfy');
       const pushNtfyMock = vi.mocked(pushNtfy);
 
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockResolvedValue(undefined);
 
@@ -3968,7 +3999,7 @@ describe('Worker fetch handler', () => {
 
       expect(response.status).toBe(200);
       expect(vi.mocked(Cloudflare)).toHaveBeenCalledWith(expect.objectContaining({ apiToken: 'my-raw-api-token' }));
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
       expect(body.success).toBe(true);
 
       const waitUntilArgs = (waitUntilMock.mock.calls as [Promise<void>][]).map(([p]) => p);
@@ -3984,7 +4015,7 @@ describe('Worker fetch handler', () => {
       const response = await worker.fetch(request, env, ctx);
 
       expect(response.status).toBe(422);
-      const body = (await response.json()) as any;
+      const body: unknown = await response.json();
       expect(body).toEqual({
         success: false,
         error: "Missing IP. Provide 'ip4' and/or 'ip6'; 'auto' uses the client IP.",
@@ -3995,11 +4026,11 @@ describe('Worker fetch handler', () => {
       const { pushNtfy } = await import('../src/pushNtfy');
       const pushNtfyMock = vi.mocked(pushNtfy);
 
-      const kvMock = vi.mocked(env.DDNS_KV) as any;
+      const kvMock = kvOf(env);
       kvMock.get.mockResolvedValue(null);
       kvMock.put.mockResolvedValue(undefined);
 
-      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' } as any);
+      mockCloudflareClient.user.tokens.verify.mockResolvedValue({ id: 'token-id-123', status: 'active' });
       mockCloudflareClient.zones.list.mockReturnValue(
         mockPage({
           result: [{ id: 'zone1', name: 'example.com' }],
@@ -4038,11 +4069,11 @@ describe('Worker fetch handler', () => {
       );
 
       const response = await worker.fetch(request, env, ctx);
-      const body = (await response.json()) as any;
+      const body = await response.json<UpdateResponseBody>();
 
       expect(response.status).toBe(200);
       expect(body.data.records).toHaveLength(4);
-      const types = (body.data.records as any[]).map((r: any) => r.type as string);
+      const types = body.data.records.map((r) => r.type);
       expect(types.filter((t) => t === 'A')).toHaveLength(2);
       expect(types.filter((t) => t === 'AAAA')).toHaveLength(2);
       expect(mockCloudflareClient.dns.records.list).toHaveBeenCalledTimes(4);
