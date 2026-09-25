@@ -1,5 +1,5 @@
-import { vi } from 'vitest';
-import { ALERT_DISTINCT } from '../../src/refusals';
+import { vi, type Mock } from 'vitest';
+import { ALERT_DISTINCT, type RefusalTally, type RefusalUpdate } from '../../src/refusals';
 
 export const createMockCloudflareClient = () => {
   const mockClient = {
@@ -45,10 +45,19 @@ export const mockPage = <T>(...pages: { result: T[] }[]): Promise<{ result: T[] 
 /** KV refuses an expirationTtl under this, and the worker must respect it. */
 const KV_MIN_EXPIRATION_TTL = 60;
 
+/** The KV namespace createMockEnv puts in `env`, typed as the mock it is. */
+export interface KVMock {
+  get: Mock<(key: string) => Promise<string | null>>;
+  put: Mock<(key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>>;
+  delete: Mock<(key: string) => Promise<void>>;
+  list: Mock<() => Promise<{ keys: unknown[]; list_complete: boolean; cursor: string }>>;
+  getWithMetadata: Mock<() => Promise<unknown>>;
+}
+
 export const createMockKVNamespace = (): KVNamespace => {
   const storage = new Map<string, string>();
 
-  return {
+  const kv: KVMock = {
     get: vi.fn((key: string) => Promise.resolve(storage.get(key) ?? null)),
     put: vi.fn((key: string, value: string, options?: { expirationTtl?: number }) => {
       // The real namespace rejects a short TTL, and the worker swallows the
@@ -70,37 +79,86 @@ export const createMockKVNamespace = (): KVNamespace => {
       return Promise.resolve(undefined);
     }),
     list: vi.fn(() => Promise.resolve({ keys: [], list_complete: true, cursor: '' })),
-    getWithMetadata: vi.fn(),
-  } as unknown as KVNamespace;
+    getWithMetadata: vi.fn<() => Promise<unknown>>(),
+  };
+  return kv as unknown as KVNamespace;
 };
 
 /**
- * Returns a D1PreparedStatement mock whose bind() returns itself so callers
- * can chain .bind(...).all() or pass it to batch(). The all() default returns
- * an empty results set; override per-test via mockResolvedValue.
+ * A D1PreparedStatement mock whose bind() returns itself so callers can chain
+ * .bind(...).all() or pass it to batch(). The all() default returns an empty
+ * results set; override per-test via mockResolvedValue.
  */
-export const createMockD1Statement = () => {
-  const stmt = {
-    bind: vi.fn(),
-    all: vi.fn().mockResolvedValue({ results: [] }),
-    run: vi.fn().mockResolvedValue({ success: true }),
-    first: vi.fn().mockResolvedValue(null),
-    raw: vi.fn().mockResolvedValue([]),
+export interface D1StatementMock {
+  bind: Mock<(...values: unknown[]) => D1StatementMock>;
+  all: Mock<() => Promise<{ results: unknown[] }>>;
+  run: Mock<() => Promise<{ success: boolean }>>;
+  first: Mock<() => Promise<unknown>>;
+  raw: Mock<() => Promise<unknown[]>>;
+}
+
+/** The audit database createMockEnv puts in `env`, typed as the mock it is. */
+export interface AuditDbMock {
+  prepare: Mock<(query: string) => D1StatementMock>;
+  batch: Mock<(statements: D1StatementMock[]) => Promise<unknown[]>>;
+  exec: Mock<(query: string) => Promise<{ count: number; duration: number }>>;
+  dump: Mock<() => Promise<ArrayBuffer>>;
+  /** The one statement every prepare() returns, so a test reads it without calling prepare itself. */
+  statement: D1StatementMock;
+}
+
+export const createMockD1Statement = (): D1StatementMock => {
+  const stmt: D1StatementMock = {
+    bind: vi.fn<(...values: unknown[]) => D1StatementMock>(),
+    all: vi.fn<() => Promise<{ results: unknown[] }>>().mockResolvedValue({ results: [] }),
+    run: vi.fn<() => Promise<{ success: boolean }>>().mockResolvedValue({ success: true }),
+    first: vi.fn<() => Promise<unknown>>().mockResolvedValue(null),
+    raw: vi.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
   };
   // bind() returns the same statement so chaining works
   stmt.bind.mockReturnValue(stmt);
   return stmt;
 };
 
-export const createMockAuditDb = () => {
-  const stmt = createMockD1Statement();
-  return {
-    prepare: vi.fn().mockReturnValue(stmt),
-    batch: vi.fn().mockResolvedValue([]),
-    exec: vi.fn().mockResolvedValue({ count: 0, duration: 0 }),
-    dump: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
-  } as unknown as D1Database;
+/** The arguments of the statement's last bind() call. Throws when bind() was never called. */
+export const lastBind = (statement: D1StatementMock): unknown[] => {
+  const call = statement.bind.mock.calls.at(-1);
+  if (call === undefined) {
+    throw new Error('bind() was never called on the statement');
+  }
+  return call;
 };
+
+export const createMockAuditDb = (): D1Database => {
+  const statement = createMockD1Statement();
+  const db: AuditDbMock = {
+    prepare: vi.fn<(query: string) => D1StatementMock>().mockReturnValue(statement),
+    batch: vi.fn<(statements: D1StatementMock[]) => Promise<unknown[]>>().mockResolvedValue([]),
+    exec: vi.fn<(query: string) => Promise<{ count: number; duration: number }>>().mockResolvedValue({
+      count: 0,
+      duration: 0,
+    }),
+    dump: vi.fn<() => Promise<ArrayBuffer>>().mockResolvedValue(new ArrayBuffer(0)),
+    statement,
+  };
+  return db as unknown as D1Database;
+};
+
+/** One token's stand-in counter, as the refusals namespace hands it out. */
+export interface RefusalStubMock {
+  add: Mock<(day: string, hostnames: string[]) => Promise<RefusalUpdate>>;
+  tally: Mock<(day: string) => Promise<RefusalTally>>;
+}
+
+/** The refusals namespace createMockEnv puts in `env`, typed as the mock it is. */
+export interface RefusalsMock {
+  getByName: Mock<(tokenId: string) => RefusalStubMock>;
+}
+
+/** The rate limiter createMockEnv puts in `env`, typed as the mock it is. */
+export interface RateLimiterMock {
+  limit: Mock<(options: RateLimitOptions) => Promise<RateLimitOutcome>>;
+}
 
 /**
  * Stands in for the refusal-counter namespace, backed by a Map so a tally
@@ -112,14 +170,14 @@ export const createMockAuditDb = () => {
  */
 export const createMockRefusals = () => {
   const tallies = new Map<string, { day: string; n: number; names: string[]; warned: boolean }>();
-  const stubs = new Map<string, { add: ReturnType<typeof vi.fn>; tally: ReturnType<typeof vi.fn> }>();
-  const getByName = vi.fn((tokenId: string) => {
+  const stubs = new Map<string, RefusalStubMock>();
+  const getByName = vi.fn((tokenId: string): RefusalStubMock => {
     const existing = stubs.get(tokenId);
     if (existing !== undefined) {
       return existing;
     }
-    const stub = {
-      add: vi.fn((day: string, hostnames: string[]) => {
+    const stub: RefusalStubMock = {
+      add: vi.fn((day: string, hostnames: string[]): Promise<RefusalUpdate> => {
         const state = tallies.get(tokenId);
         const current = state?.day === day ? state : { day, n: 0, names: [], warned: false };
         const names = [...new Set([...current.names, ...hostnames])];
@@ -136,7 +194,7 @@ export const createMockRefusals = () => {
           alert,
         });
       }),
-      tally: vi.fn((day: string) => {
+      tally: vi.fn((day: string): Promise<RefusalTally> => {
         const state = tallies.get(tokenId);
         if (state?.day !== day) {
           return Promise.resolve({ total: 0, distinct: 0, hostnames: [] });
@@ -147,19 +205,34 @@ export const createMockRefusals = () => {
     stubs.set(tokenId, stub);
     return stub;
   });
-  return { namespace: { getByName } as unknown as Env['REFUSALS'], getByName, stubs };
+  const namespace: RefusalsMock = { getByName };
+  return { namespace: namespace as unknown as Env['REFUSALS'], getByName, stubs };
 };
 
 export const createMockEnv = (): Env => {
+  const rateLimiter: RateLimiterMock = {
+    limit: vi.fn<(options: RateLimitOptions) => Promise<RateLimitOutcome>>().mockResolvedValue({ success: true }),
+  };
   const env: Env = {
     DDNS_KV: createMockKVNamespace(),
     AUDIT_DB: createMockAuditDb(),
     ACCESS_KEY: '',
-    RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
+    RATE_LIMITER: rateLimiter,
     REFUSALS: createMockRefusals().namespace,
   };
   return env;
 };
+
+// createMockEnv types each binding as the real one, so `env` is an Env. These
+// read a binding back as the mock that stands in for it.
+
+export const kvOf = (env: Env): KVMock => env.DDNS_KV as unknown as KVMock;
+
+export const auditDbOf = (env: Env): AuditDbMock => env.AUDIT_DB as unknown as AuditDbMock;
+
+export const rateLimiterOf = (env: Env): RateLimiterMock => env.RATE_LIMITER as unknown as RateLimiterMock;
+
+export const refusalsOf = (env: Env): RefusalsMock => env.REFUSALS as unknown as RefusalsMock;
 
 export interface MockCtx {
   /** Passed to worker.fetch as the ExecutionContext. */

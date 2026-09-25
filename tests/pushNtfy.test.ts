@@ -5,8 +5,8 @@ const DEFAULT_NTFY_URL = 'https://ntfy.example.com/test-topic';
 
 describe('pushNtfy', () => {
   beforeEach(() => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.stubGlobal('fetch', vi.fn());
   });
 
@@ -52,7 +52,7 @@ describe('pushNtfy', () => {
         method: 'POST',
         body: 'Single notification message',
         headers: { 'Content-Type': 'text/plain' },
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       });
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -67,7 +67,7 @@ describe('pushNtfy', () => {
         method: 'POST',
         body: 'Single message in array',
         headers: { 'Content-Type': 'text/plain' },
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       });
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -88,7 +88,7 @@ describe('pushNtfy', () => {
         method: 'POST',
         body: expectedBody,
         headers: { 'Content-Type': 'text/plain' },
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       });
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -110,7 +110,7 @@ describe('pushNtfy', () => {
         method: 'POST',
         body: expectedBody,
         headers: { 'Content-Type': 'text/plain' },
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       });
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -191,7 +191,7 @@ describe('pushNtfy', () => {
         method: 'POST',
         body: 'Integration test message',
         headers: { 'Content-Type': 'text/plain' },
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       });
     });
 
@@ -207,7 +207,7 @@ describe('pushNtfy', () => {
         method: 'POST',
         body: 'Custom server test',
         headers: { 'Content-Type': 'text/plain' },
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       });
     });
   });

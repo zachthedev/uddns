@@ -6,6 +6,13 @@ rules:
     config:
       policies:
         '*': hash-pin
+  # An advisory published against an unchanged action pin turns every pull request's workflows
+  # check red until the pin moves. A waiver is one GHSA id per entry, with a comment beside it
+  # naming the advisory, what it blocks, why shipping is safer and the condition that removes it.
+  # No advisory is waived.
+  known-vulnerable-actions:
+    config:
+      allow: []
   # cd.yml's release-pr job and deps.yml's deps job hand their called workflow every secret. Each
   # called job names an environment, and a caller that runs in none cannot pass that environment's
   # secret by name. The comment above each job says so. Each entry names a file, and a file entry

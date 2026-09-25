@@ -22,9 +22,8 @@ else's record.
 ## What is supported
 
 The newest release on the [Releases page](https://github.com/zachthedev/uddns/releases). A fix ships
-as a new release, not as a patch to an older one, and the release deploys. The deployment at
-`ddns.quist.network` runs the newest release. A deployment from a fork is supported while it runs the
-same one.
+as a new release, not as a patch to an older one, and the release deploys. The maintainer's own
+deployment runs the newest release. A deployment from a fork is supported while it runs the same one.
 
 ## In scope
 

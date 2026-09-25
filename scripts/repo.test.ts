@@ -46,11 +46,25 @@ function step(list: readonly Table[], name: string): Table {
   return found[0] ?? {};
 }
 
+/** The index of the one step among `list` that uses `action`, at any ref. */
+function using(list: readonly Table[], action: string): number {
+  const found = list.flatMap((item, index) =>
+    typeof item['uses'] === 'string' && item['uses'].startsWith(`${action}@`) ? [index] : [],
+  );
+  expect(found).toHaveLength(1);
+  return found[0] ?? -1;
+}
+
+/** Every `run` value among `list`, in order. */
+function runs(list: readonly Table[]): unknown[] {
+  return list.filter((item) => 'run' in item).map((item) => item['run']);
+}
+
 // The script runner puts node_modules/.bin first on PATH, so a committed bun
 // there would run in place of the gate. The call sites that decide a merge
 // start the file with a bare bun.
 test("CI's gate job starts the gate file itself, not through the script runner", () => {
-  expect(step(steps('.github/workflows/ci.yml', 'gate'), 'Verify')['run']).toBe('bun --no-env-file scripts/check.ts');
+  expect(runs(steps('.github/workflows/ci.yml', 'gate')).at(-1)).toBe('bun --no-env-file scripts/check.ts');
 });
 
 test('the push hook starts the gate file itself, in its quick form', () => {
@@ -66,16 +80,16 @@ test('the push hook starts the gate file itself, in its quick form', () => {
 // mise.toml would load there before the gate refuses it.
 test("CI's gate job starts mise before the checkout, and exports nothing mise.toml sets", () => {
   const list = steps('.github/workflows/ci.yml', 'gate');
-  const names = list.map((item) => item['name']);
+  const mise = using(list, 'jdx/mise-action');
 
-  expect(names.indexOf('Setup mise')).toBeGreaterThanOrEqual(0);
-  expect(names.indexOf('Setup mise')).toBeLessThan(names.indexOf('Checkout repository'));
-  expect(table(step(list, 'Setup mise')['with'], 'Setup mise with')).toMatchObject({
+  expect(mise).toBeLessThan(using(list, 'actions/checkout'));
+  expect(table(list[mise]?.['with'], 'mise-action with')).toMatchObject({
     install: false,
     cache: false,
     github_token: '',
     env: false,
     export_path: false,
+    add_shims_to_path: false,
   });
 });
 
@@ -88,11 +102,17 @@ test('the ci workflow pins the four mise config names for every step', () => {
   });
 });
 
+// The job's whole run list, so an install anywhere in it, prefixed by another
+// command or on a later line of a step, fails the case.
 test.each([
-  ['.github/workflows/ci.yml', 'gate'],
-  ['.github/workflows/cd.yml', 'deploy'],
-])('%s job %s installs with no install script', (path: string, job: string) => {
-  expect(step(steps(path, job), 'Install dependencies')['run']).toBe('bun install --frozen-lockfile --ignore-scripts');
+  [
+    '.github/workflows/ci.yml',
+    'gate',
+    ['bun install --frozen-lockfile --ignore-scripts', 'bun --no-env-file scripts/check.ts'],
+  ],
+  ['.github/workflows/cd.yml', 'deploy', ['bun install --frozen-lockfile --ignore-scripts', 'bun run deploy']],
+])('%s job %s installs once, with no install script', (path: string, job: string, expected: string[]) => {
+  expect(runs(steps(path, job))).toEqual(expected);
 });
 
 test('the package scripts a contributor runs start the gate file', () => {

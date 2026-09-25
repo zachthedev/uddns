@@ -1,30 +1,34 @@
 name: codeql
 
-# Code scanning as advanced setup, which is this file, rather than as default setup, which is a
-# switch on the repository settings page and leaves nothing in the tree. The analysis itself is the
-# reusable workflow in zachthedev/.github, pinned by commit; this file says when it runs and over
-# which languages.
+# Code scanning from a committed workflow, never default setup. The reusable workflow runs one
+# analysis per language listed below and names each check run Analyze (<language>), so the
+# default-branch checks ruleset can require them by name. Both languages here run with build
+# mode none, and codeql-action's fallback to autobuild covers C# and Java alone, so a run's
+# conclusion stands on its own.
 on:
   push:
     branches: [main]
   pull_request:
-  # Weekly, so a query published after the last change to this repository still reports against
-  # this tree. Thursday, clear of deps.yml's daily cron and of audit.yml's.
+  # At least once a week, so a query published after the last change still reports against
+  # this tree. Thursday, clear of deps.yml's daily cron and audit.yml's.
   schedule:
     - cron: '37 9 * * 4'
 
 permissions: {}
 
 jobs:
-  # Two languages. javascript-typescript is one extractor over the Worker, its tests, its scripts
-  # and the JavaScript config files. actions covers the workflows under .github. The reusable
-  # workflow adds no language of its own, so both are named here. The check runs are
-  # `codeql / Analyze (<language>)`, which is what a branch ruleset requires.
+  # javascript-typescript is one extractor over the source, the tests, the scripts and the
+  # JavaScript config files. actions covers the workflows under .github. The reusable workflow
+  # adds no language of its own, so both are named here. The called job gets at most what is
+  # granted here.
   codeql:
-    uses: zachthedev/.github/.github/workflows/codeql.yml@c53d09e393028ceddee0d761f2a7963394289a72 # v0.1.0
     permissions:
+      # Uploading the results to code scanning.
       security-events: write
+      # Reading the checkout.
       contents: read
+      # Reading the run's metadata, which a private repository needs for the upload.
       actions: read
+    uses: zachthedev/.github/.github/workflows/codeql.yml@09a9a00aae657ea11e5d5979ef3ce5859d9aba3a # v0.2.0
     with:
       languages: '[{"language":"javascript-typescript"},{"language":"actions"}]'

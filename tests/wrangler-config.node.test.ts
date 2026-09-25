@@ -40,7 +40,13 @@ interface ProvisionableBindings {
  * The committed configuration as wrangler reads it for a deploy. The read
  * validates the file on the way through, so a config wrangler would refuse
  * fails here before it fails a deploy.
+ *
+ * wrangler's published types take readConfig's return type from
+ * @cloudflare/workers-utils, which wrangler does not install, so the type does
+ * not resolve and typescript-eslint reads the value as an error type. The
+ * directive goes once wrangler ships types that resolve.
  */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- readConfig's return type does not resolve, as above
 const config: ProvisionableBindings = unstable_readConfig({ config: CONFIG_PATH });
 
 /** Every field that would pin a binding to one account's resource. */
