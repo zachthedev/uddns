@@ -12,15 +12,16 @@
 
 # Directories a checkout fills locally, which `bun run format` walks into,
 # since --ignore-path keeps .gitignore from narrowing Prettier: build and test
-# output, and Claude Code's worktrees, each a whole checkout of its own. The
-# gate refuses a file tracked under any of them.
+# output, and Claude Code's worktrees, each a whole checkout of its own.
+# Review refuses a file tracked under any of them.
 /dist/
 /coverage/
 /.claude/worktrees/
 
 # A contributor's own files, which .gitignore lists and `bun run format` would
 # otherwise rewrite: lefthook's local configs and Claude Code's local settings.
-# The gate refuses to track each of these names, and any path below one.
+# The gate refuses a tracked lefthook-local config, and review refuses the
+# rest, with any path below one.
 /lefthook-local
 /lefthook-local.*
 /.lefthook-local

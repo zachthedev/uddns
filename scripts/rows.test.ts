@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import {
   actionlintFinished,
   comparable,
+  compilerFinding,
   ignoreCommentFindings,
   type InheritedCall,
   inheritedCallFindings,
@@ -11,7 +12,7 @@ import {
   unreadSourceFinding,
   zizmorCompleted,
 } from './rows';
-import { type Finished, plain, printable } from './run';
+import { type Finished, plain, printable, quote } from './run';
 
 /** An asymmetric matcher for a finding carrying `fragment`. */
 function carrying(fragment: string): string {
@@ -46,6 +47,19 @@ test('printable escapes every control character but tab and newline, and every i
   const line = `a${BEL}b\tc${ESC}[2Kd\re${String.fromCharCode(0x202e)}f${String.fromCharCode(0x85)}g\r\nh`;
 
   expect(printable(line)).toBe('a\\u0007b\tc\\u001b[2Kd\\u000de\\u202ef\\u0085g\nh');
+});
+
+// A runner reads a line of a job's log that starts with :: as a workflow
+// command, and it breaks lines at a carriage return as at a newline.
+test.each([
+  ['a newline', `docs/a\n::error::x.md`, '"docs/a\\n::error::x.md"'],
+  ['a carriage return', `docs/a\r::error::x.md`, '"docs/a\\r::error::x.md"'],
+  ['both', `a\r\n::warning::b`, '"a\\r\\n::warning::b"'],
+])('quote keeps input holding %s on one line, escaped', (_label: string, input: string, expected: string) => {
+  const quoted = quote(input);
+
+  expect(quoted).toBe(expected);
+  expect(printable(`finding: ${quoted}`).split('\n')).toHaveLength(1);
 });
 
 /* ///// Test counts ///// */
@@ -210,6 +224,27 @@ test.each(['x.ts', 'x.mts', 'x.cts', 'x.tsx', 'x.d.ts', 'X.TS'])('%p counts as a
 
 test('every tracked TypeScript file read yields nothing', () => {
   expect(unreadSourceFinding(['src/a.ts', 'docs/b.md'], new Set([comparable('src/a.ts')]))).toBeUndefined();
+});
+
+/* ///// The compiler the typecheck row runs ///// */
+
+const PINNED = 'npm:typescript@7.0.2';
+
+test.each([
+  ['the pinned major', 'Version 7.0.2\n', PINNED],
+  ['another minor of the pinned major', 'Version 7.1.4\r\n', PINNED],
+  ['the pinned major in color', `${colored('Version 7.0.2')}\n`, PINNED],
+  ['a plain version pin', 'Version 7.0.2\n', '7.0.2'],
+])('%s passes', (_label: string, printed: string, spec: string) => {
+  expect(compilerFinding(printed, spec)).toBeUndefined();
+});
+
+test.each([
+  ['the 6.x compiler', 'Version 6.0.3\n', PINNED, 'printed "Version 6.0.3", and package.json pins major 7'],
+  ['no version line', 'error TS5083: Cannot read file\n', PINNED, 'package.json pins major 7'],
+  ['a pin naming no version', 'Version 7.0.2\n', 'npm:typescript@latest', 'which names no version'],
+])('%s is a finding', (_label: string, printed: string, spec: string, fragment: string) => {
+  expect(compilerFinding(printed, spec)).toEqual(carrying(fragment));
 });
 
 /* ///// Prettier ignore comments ///// */

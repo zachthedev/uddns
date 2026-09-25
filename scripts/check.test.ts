@@ -1,8 +1,8 @@
 // This repository's own cases for scripts/check.ts: the command line each row
 // starts, the NO_PROXY the workerd rows get, and the cf-typegen:check row's
-// order and restore. run() is swapped for a recorder before check.ts loads,
-// so no case starts a program: nothing reaches gh, git, mise, wrangler,
-// workerd or the network.
+// order and restore. run() and git() are swapped for recorders before
+// check.ts loads, so no case starts a program: nothing reaches gh, git, mise,
+// wrangler, workerd or the network.
 
 import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -43,6 +43,11 @@ function recorder(
   return Promise.resolve({ exitCode: 0, stdout: '', stderr: '', heldOpen: false, ...answer(cmd) });
 }
 
+/** git() as the recorder sees it: `git` and its arguments, inheriting nothing. */
+function gitRecorder(args: readonly string[]): Promise<Finished> {
+  return recorder(['git', ...args], {}, { inherit: false });
+}
+
 // Copied before the mocks replace them in place, so afterAll can put them
 // back for the test files that run after this one in the same process.
 const REAL_RUN = { ...runModule };
@@ -59,7 +64,7 @@ function binaryPath(key: string): string {
   return key === 'shellcheck' && quotedShellcheck ? join(standIns.dir, "it's", key) : join(standIns.dir, key);
 }
 
-await mock.module('./run', () => ({ ...REAL_RUN, run: recorder }));
+await mock.module('./run', () => ({ ...REAL_RUN, run: recorder, git: gitRecorder }));
 await mock.module('./tools', () => ({
   ...REAL_TOOLS,
   install: (): Promise<void> => {
@@ -70,7 +75,7 @@ await mock.module('./tools', () => ({
     Promise.resolve(new Map(REAL_TOOLS.TOOLS.map((tool) => [tool.key, binaryPath(tool.key)]))),
 }));
 
-// check.ts reads its node_modules path from the working directory it loads in.
+// The root check.ts loads from, whose scripts/ holds the ShellCheck stand-in.
 const ROOT = process.cwd();
 const check = await import('./check');
 
@@ -99,6 +104,7 @@ beforeEach(() => {
   answer = passing;
   cwd = mkdtempSync(join(tmpdir(), 'gate-check-'));
   process.chdir(cwd);
+  plantInstall();
 });
 
 afterEach(() => {
@@ -147,16 +153,30 @@ function plantTree(): void {
   writeFileSync('.github/zizmor.yml', 'rules:\n  secrets-inherit:\n    ignore:\n      - cd.yml\n      - deps.yml\n');
 }
 
+/** The JavaScript tools the rows start through bunx. */
+const JS_TOOLS: readonly string[] = ['tsc', 'prettier', 'eslint', 'wrangler', 'vitest'];
+
 /**
- * The package entry `cmd` starts after the gate Bun and `--no-env-file`,
- * relative to the node_modules check.ts loaded beside, or undefined.
+ * Writes what a checkout's install leaves for the rows into the working
+ * directory: a regular file for each of {@link JS_TOOLS} under
+ * node_modules/.bin, in the Windows and the other spelling, and a package.json
+ * naming the native compiler at major 7.
  */
-function entry(cmd: readonly string[]): string | undefined {
-  const prefix = join(ROOT, 'node_modules');
-  const third = cmd[2] ?? '';
-  return cmd[0] === process.execPath && cmd[1] === '--no-env-file' && third.startsWith(prefix)
-    ? third.slice(prefix.length + 1).replaceAll('\\', '/')
-    : undefined;
+function plantInstall(): void {
+  mkdirSync(join('node_modules', '.bin'), { recursive: true });
+  for (const name of JS_TOOLS) {
+    writeFileSync(join('node_modules', '.bin', name), '');
+    writeFileSync(join('node_modules', '.bin', `${name}.exe`), '');
+  }
+  writeFileSync('package.json', JSON.stringify({ devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' } }));
+}
+
+/** How every JavaScript tool a row runs starts: the gate Bun running bunx. */
+const BUNX: readonly string[] = [process.execPath, 'x', '--bun', '--no-install'];
+
+/** The JavaScript tool `cmd` starts through {@link BUNX}, or undefined. */
+function tool(cmd: readonly string[]): string | undefined {
+  return BUNX.every((word, index) => cmd[index] === word) ? cmd[BUNX.length] : undefined;
 }
 
 /** zizmor's report of one job passing secrets: inherit in each file the held zizmor.yml waives. */
@@ -191,12 +211,14 @@ function passing(cmd: readonly string[]): Answer {
   if (program === process.execPath && args[1] === 'test') {
     return { stderr: ' 3 pass\n 0 fail\nRan 3 tests across 1 file.\n' };
   }
-  switch (entry(cmd)) {
-    case '@typescript/native/bin/tsc':
-      return { stdout: `${resolve('src/a.ts').replaceAll('\\', '/')}\n` };
-    case 'eslint/bin/eslint.js':
+  switch (tool(cmd)) {
+    case 'tsc':
+      return cmd.includes('--version')
+        ? { stdout: 'Version 7.0.2\n' }
+        : { stdout: `${resolve('src/a.ts').replaceAll('\\', '/')}\n` };
+    case 'eslint':
       return { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [] }]) };
-    case 'vitest/vitest.mjs':
+    case 'vitest':
       return { stdout: ' Test Files  1 passed (1)\n      Tests  3 passed (3)\n' };
     default:
       break;
@@ -238,9 +260,9 @@ function callsTo(program: string): Call[] {
   return calls.filter((call) => call.cmd[0] === program);
 }
 
-/** The recorded calls that start the package entry `path`. */
-function callsToEntry(path: string): Call[] {
-  return calls.filter((call) => entry(call.cmd) === path);
+/** The recorded calls that start the JavaScript tool `name` through bunx. */
+function callsToTool(name: string): Call[] {
+  return calls.filter((call) => tool(call.cmd) === name);
 }
 
 /** The value after `flag` in `cmd`, or undefined. */
@@ -308,16 +330,16 @@ async function runEveryRow(): Promise<void> {
 }
 
 const PACKAGE_ROWS: readonly (readonly [string, string])[] = [
-  ['typecheck', '@typescript/native/bin/tsc'],
-  ['cf-typegen:check', 'wrangler/bin/wrangler.js'],
-  ['format:check', 'prettier/bin/prettier.cjs'],
-  ['lint', 'eslint/bin/eslint.js'],
-  ['test', 'vitest/vitest.mjs'],
+  ['typecheck', 'tsc'],
+  ['cf-typegen:check', 'wrangler'],
+  ['format:check', 'prettier'],
+  ['lint', 'eslint'],
+  ['test', 'vitest'],
 ];
 
 test.each([...PACKAGE_ROWS])(
-  '%s starts the gate Bun with no env file on the absolute entry %s',
-  async (name: string, path: string) => {
+  '%s starts %s through bun x --bun --no-install under the gate Bun',
+  async (name: string, expected: string) => {
     plantTree();
     writeFileSync(TYPES, 'x\n');
 
@@ -326,21 +348,46 @@ test.each([...PACKAGE_ROWS])(
     const started = calls.filter((call) => call.cmd[0] === process.execPath);
     expect(started.length).toBeGreaterThan(0);
     for (const call of started) {
-      expect(call.cmd[1]).toBe('--no-env-file');
-      expect(call.cmd[2]).toBe(join(ROOT, 'node_modules', path));
-      expect(isAbsolute(call.cmd[2] ?? '')).toBe(true);
+      expect(call.cmd.slice(0, BUNX.length + 1)).toEqual([...BUNX, expected]);
     }
   },
 );
 
-test('no row starts a program through bun run, bunx or node, or by a name other than git and gh', async () => {
+/** Removes both spellings of `name` from the working directory's node_modules/.bin. */
+function uninstall(name: string): void {
+  rmSync(join('node_modules', '.bin', name));
+  rmSync(join('node_modules', '.bin', `${name}.exe`));
+}
+
+/** The refusal a row gives when node_modules/.bin lacks `name`, naming the install to run. */
+function notInstalled(name: string): string {
+  return `${name} is not installed in this checkout: run bun install --frozen-lockfile, or bun install --frozen-lockfile --ignore-scripts in a worktree (CONTRIBUTING.md#setup).`;
+}
+
+// bunx runs a copy from a parent directory, PATH or its own cache when the
+// checkout's node_modules/.bin lacks the tool, so each row refuses before it
+// starts one.
+test.each([...PACKAGE_ROWS])(
+  '%s refuses before it starts anything when node_modules/.bin lacks %s',
+  async (name: string, missing: string) => {
+    plantTree();
+    writeFileSync(TYPES, 'x\n');
+    uninstall(missing);
+
+    expect(await outcome(() => row(name).check(false))).toBe(notInstalled(missing));
+    expect(callsToTool(missing)).toEqual([]);
+  },
+);
+
+test('no row starts a program through bun run or node, or by a name other than git and gh', async () => {
   await runEveryRow();
 
   for (const call of calls) {
     const [program = ''] = call.cmd;
     expect(isAbsolute(program) || program === 'git' || program === 'gh').toBe(true);
     if (program === process.execPath) {
-      // Bun's own flag first, then the entry or bun's subcommand.
+      // A direct start carries no env file, and every other Bun start is bunx with its two flags.
+      expect(call.cmd[1] === '--no-env-file' || tool(call.cmd) !== undefined).toBe(true);
       expect(call.cmd.slice(1, 3)).not.toContain('run');
     }
   }
@@ -357,7 +404,7 @@ test('typecheck names each project with --project, one tsc pass each, in order',
 
   await row('typecheck').check(false);
 
-  const passes = callsToEntry('@typescript/native/bin/tsc');
+  const passes = callsToTool('tsc').filter((call) => call.cmd.includes('--listFiles'));
   expect(passes.map((call) => after(call.cmd, '--project'))).toEqual([...check.PROJECTS]);
   for (const call of passes) {
     expect(call.cmd).toContain('--noEmit');
@@ -370,10 +417,83 @@ test('lint names eslint.config.ts and allows no warning', async () => {
 
   await row('lint').check(false);
 
-  const [call] = callsToEntry('eslint/bin/eslint.js');
+  const [call] = callsToTool('eslint');
   expect(after(call?.cmd ?? [], '--config')).toBe('eslint.config.ts');
   expect(call?.cmd).toContain('--max-warnings=0');
   expect(after(call?.cmd ?? [], '--format')).toBe('json');
+});
+
+/* ///// lint and the rule no directive may waive ///// */
+
+/** One report as ESLint's json formatter lists it: `ruleId` at `line`, column 1. */
+interface Report {
+  readonly ruleId: string;
+  readonly severity: number;
+  readonly message: string;
+  readonly line: number;
+  readonly column: number;
+}
+
+/** The report `ruleId` gives at `line`. */
+function report(ruleId: string, line: number): Report {
+  return { ruleId, severity: 2, message: `${ruleId} reported here`, line, column: 1 };
+}
+
+/** The answer for every call but ESLint's, which reports `suppressed` against src/a.ts and nothing else. */
+function suppressing(suppressed: readonly Report[]): (cmd: readonly string[]) => Answer {
+  return (cmd: readonly string[]): Answer =>
+    tool(cmd) === 'eslint'
+      ? { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [], suppressedMessages: suppressed }]) }
+      : passing(cmd);
+}
+
+interface SuppressedCase {
+  readonly label: string;
+  readonly suppressed: readonly Report[];
+  /** The lines of src/a.ts where a directive suppressed gate/visible-reason. */
+  readonly lines: readonly number[];
+}
+
+// ESLint applies a directive to the problems at its own position, so a
+// directive naming gate/visible-reason suppresses that rule's report on the
+// directive itself: the -line form on its own line, and a block disable on
+// every line up to its enable. ESLint still lists each suppressed report, so
+// the row refuses one there, naming the file and the line.
+const SUPPRESSED_CASES: readonly SuppressedCase[] = [
+  {
+    label: 'a -line directive naming the rule beside the one it waives',
+    suppressed: [report('no-debugger', 1), report('gate/visible-reason', 1)],
+    lines: [1],
+  },
+  {
+    label: 'a block disable of the rule, closed by its enable',
+    suppressed: [report('gate/visible-reason', 1), report('gate/visible-reason', 2), report('no-debugger', 3)],
+    lines: [1, 2],
+  },
+];
+
+test.each([...SUPPRESSED_CASES])('lint refuses $label', async ({ suppressed, lines }: SuppressedCase) => {
+  plantTree();
+  answer = suppressing(suppressed);
+
+  const message = await outcome(() => row('lint').check(false));
+
+  expect(message).toStartWith(
+    `eslint reported ${String(lines.length)} gate/visible-reason ${lines.length === 1 ? 'problem' : 'problems'} a directive suppressed`,
+  );
+  for (const line of lines) {
+    expect(message).toContain(
+      `${JSON.stringify(resolve('src/a.ts'))}:${String(line)}:1  a directive suppresses gate/visible-reason here`,
+    );
+  }
+  expect(message).not.toContain('no-debugger reported here');
+});
+
+test('lint passes a report of another rule a directive suppressed', async () => {
+  plantTree();
+  answer = suppressing([report('no-debugger', 3)]);
+
+  expect(await outcome(() => row('lint').check(false))).toBe('passed');
 });
 
 test('format:check names .prettierrc and .prettierignore, reads no .editorconfig, and hands over the files Prettier formats', async () => {
@@ -381,7 +501,7 @@ test('format:check names .prettierrc and .prettierignore, reads no .editorconfig
 
   await row('format:check').check(false);
 
-  const [call] = callsToEntry('prettier/bin/prettier.cjs');
+  const [call] = callsToTool('prettier');
   const cmd = call?.cmd ?? [];
   expect(after(cmd, '--config')).toBe('.prettierrc');
   expect(after(cmd, '--ignore-path')).toBe('.prettierignore');
@@ -441,16 +561,16 @@ test('zizmor in the full form runs online with the token gh answers, handed to z
 });
 
 test.each([
-  ['cf-typegen:check', 'wrangler/bin/wrangler.js'],
-  ['test', 'vitest/vitest.mjs'],
-])('%s hands %s one NO_PROXY spelling, carrying the gate list and loopback', async (name: string, path: string) => {
+  ['cf-typegen:check', 'wrangler'],
+  ['test', 'vitest'],
+])('%s hands %s one NO_PROXY spelling, carrying the gate list and loopback', async (name: string, started: string) => {
   plantTree();
   writeFileSync(TYPES, 'x\n');
   process.env['NO_PROXY'] = 'a.example';
 
   await row(name).check(false);
 
-  const [call] = callsToEntry(path);
+  const [call] = callsToTool(started);
   expect(spellings(call?.env ?? {}, 'NO_PROXY')).toEqual(['NO_PROXY']);
   expect(call?.env['NO_PROXY']).toBe(`a.example,${LOOPBACK}`);
 });
@@ -458,8 +578,8 @@ test.each([
 test('the test row runs vitest run --coverage', async () => {
   await row('test').check(false);
 
-  const [call] = callsToEntry('vitest/vitest.mjs');
-  expect(call?.cmd.slice(3, 5)).toEqual(['run', '--coverage']);
+  const [call] = callsToTool('vitest');
+  expect(call?.cmd.slice(BUNX.length + 1, BUNX.length + 3)).toEqual(['run', '--coverage']);
 });
 
 test.each([
@@ -481,7 +601,7 @@ function typegen(overrides: { readonly listed?: Answer; readonly wrangler?: Answ
     if (cmd.includes('--error-unmatch')) {
       return overrides.listed ?? {};
     }
-    if (entry(cmd) === 'wrangler/bin/wrangler.js') {
+    if (tool(cmd) === 'wrangler') {
       return overrides.wrangler ?? {};
     }
     if (cmd[0] === 'git' && cmd[1] === 'checkout') {
@@ -491,41 +611,28 @@ function typegen(overrides: { readonly listed?: Answer; readonly wrangler?: Answ
   };
 }
 
-/** What each recorded call was: the git subcommand, or the package entry. */
+/** What each recorded call was: the git subcommand, or the JavaScript tool. */
 function steps(): string[] {
   return calls.map((call) =>
-    call.cmd[0] === 'git' ? `git ${call.cmd[1] ?? ''}` : (entry(call.cmd) ?? call.cmd[0] ?? ''),
+    call.cmd[0] === 'git' ? `git ${call.cmd[1] ?? ''}` : (tool(call.cmd) ?? call.cmd[0] ?? ''),
   );
 }
 
-test('cf-typegen:check asks git, removes the file, regenerates it, then diffs it, with no GIT_ variable', async () => {
+test('cf-typegen:check asks git, removes the file, regenerates it, then diffs it, each git inheriting nothing', async () => {
   writeFileSync(TYPES, 'x\n');
-  process.env['GIT_DIR'] = join(cwd, 'elsewhere');
-  process.env['GIT_INDEX_FILE'] = join(cwd, 'index');
   answer = typegen({});
 
   await check.cfTypegen();
 
   expect(calls.map((call) => call.cmd)).toEqual([
     ['git', 'ls-files', '--error-unmatch', '--', TYPES],
-    [
-      process.execPath,
-      '--no-env-file',
-      join(ROOT, 'node_modules', 'wrangler/bin/wrangler.js'),
-      'types',
-      '--config',
-      'wrangler.jsonc',
-      '--env-file',
-      '.dev.vars.template',
-    ],
+    [...BUNX, 'wrangler', 'types', '--config', 'wrangler.jsonc', '--env-file', '.dev.vars.template'],
     ['git', 'diff', '--no-ext-diff', '--exit-code', '--', TYPES],
   ]);
   expect(calls[1]?.typesPresent).toBe(false);
+  // git() inherits nothing, so no GIT_DIR or GIT_INDEX_FILE a hook exports reaches git.
   for (const call of calls.filter((each) => each.cmd[0] === 'git')) {
-    for (const name of ['GIT_DIR', 'GIT_INDEX_FILE']) {
-      expect(Object.hasOwn(call.env, name)).toBe(true);
-      expect(call.env[name]).toBeUndefined();
-    }
+    expect(call.options.inherit).toBe(false);
   }
 });
 
@@ -543,7 +650,7 @@ test('cf-typegen:check restores the tracked file when wrangler fails, and diffs 
   answer = typegen({ wrangler: { exitCode: 1, stderr: 'wrangler broke' } });
 
   expect(await outcome(() => check.cfTypegen())).toStartWith('wrangler types exited 1 saying: wrangler broke');
-  expect(steps()).toEqual(['git ls-files', 'wrangler/bin/wrangler.js', 'git checkout']);
+  expect(steps()).toEqual(['git ls-files', 'wrangler', 'git checkout']);
   expect(calls.at(-1)?.cmd).toEqual(['git', 'checkout', '--', TYPES]);
 });
 
@@ -555,6 +662,18 @@ test('cf-typegen:check names both failures when the restore fails too', async ()
 
   expect(message).toStartWith('wrangler types exited 1');
   expect(message).toContain(`git could not restore ${TYPES}: it exited 1 saying: checkout broke`);
+});
+
+// A throw after the delete would leave the types file gone with nothing to put
+// it back, so the row asks for wrangler first.
+test('cf-typegen:check checks for wrangler before it deletes the types file', async () => {
+  writeFileSync(TYPES, 'x\n');
+  uninstall('wrangler');
+  answer = typegen({});
+
+  expect(await outcome(() => check.cfTypegen())).toBe(notInstalled('wrangler'));
+  expect(existsSync(TYPES)).toBe(true);
+  expect(steps()).toEqual(['git ls-files']);
 });
 
 test('the tools row installs through the tools module, once per run', () => {
@@ -580,7 +699,7 @@ function isBunTest(cmd: readonly string[]): boolean {
 
 /** The answer for every call but vitest's, which answers `vitest`. */
 function vitestAnswers(vitest: Answer): (cmd: readonly string[]) => Answer {
-  return (cmd: readonly string[]): Answer => (entry(cmd) === 'vitest/vitest.mjs' ? vitest : passing(cmd));
+  return (cmd: readonly string[]): Answer => (tool(cmd) === 'vitest' ? vitest : passing(cmd));
 }
 
 /* ///// The test row's count ///// */
@@ -679,8 +798,8 @@ function outcomeOf(work: () => string): string {
 test('the test row names vitest.config.mts and runs vitest with CI set', async () => {
   await row('test').check(false);
 
-  const [call] = callsToEntry('vitest/vitest.mjs');
-  expect(call?.cmd.slice(3)).toEqual(['run', '--coverage', '--config', 'vitest.config.mts']);
+  const [call] = callsToTool('vitest');
+  expect(call?.cmd.slice(BUNX.length + 1)).toEqual(['run', '--coverage', '--config', 'vitest.config.mts']);
   expect(call?.env['CI']).toBe('true');
 });
 
@@ -737,7 +856,7 @@ const COLOR_CASES: readonly ColorCase[] = [
     name: 'typecheck',
     tool: "tsc's --listFiles line",
     answer: (cmd: readonly string[]): Answer =>
-      entry(cmd) === '@typescript/native/bin/tsc'
+      tool(cmd) === 'tsc' && cmd.includes('--listFiles')
         ? { stdout: `${colored(resolve('src/a.ts').replaceAll('\\', '/'))}\n` }
         : passing(cmd),
   },
@@ -794,7 +913,7 @@ test("format:check refuses Prettier's ignore comment before Prettier starts", as
 
   expect(message).toContain('"src/a.ts" line 2');
   expect(message).toContain('Prettier ignore comment');
-  expect(callsToEntry('prettier/bin/prettier.cjs')).toEqual([]);
+  expect(callsToTool('prettier')).toEqual([]);
 });
 
 /* ///// typecheck coverage ///// */
@@ -808,6 +927,66 @@ test('typecheck fails on a tracked TypeScript file that no project reads', async
       : passing(cmd);
 
   expect(await outcome(() => row('typecheck').check(false))).toContain('no project reads "src/b.ts"');
+});
+
+/* ///// typecheck and the pinned compiler ///// */
+
+interface CompilerCase {
+  readonly label: string;
+  /** What `tsc --version` prints. */
+  readonly printed: string;
+  /** The package.json the working directory holds, or undefined for the fixture's. */
+  readonly manifest?: string;
+  /** What the row ends with: `passed`, or its whole message. */
+  readonly expected: string;
+  /** The arguments of each tsc call, after the tool name, in order. */
+  readonly passes: readonly (readonly string[])[];
+}
+
+// Two packages ship a tsc, so the row holds `tsc --version` to the major
+// package.json pins for @typescript/native before it checks any project, and
+// checks none when the compiler or the pin is wrong.
+const COMPILER_CASES: readonly CompilerCase[] = [
+  {
+    label: 'the pinned major answers, asked before any project',
+    printed: 'Version 7.0.2\n',
+    expected: 'passed',
+    passes: [
+      ['--version'],
+      ...['tsconfig.json', 'tests/tsconfig.json', 'scripts/tsconfig.json'].map((project) => [
+        '--noEmit',
+        '--listFiles',
+        '--project',
+        project,
+      ]),
+    ],
+  },
+  {
+    label: 'another major answers, and no project is checked',
+    printed: 'Version 6.0.3\n',
+    expected:
+      'tsc --version printed "Version 6.0.3", and package.json pins major 7, so node_modules/.bin/tsc is another package\'s compiler',
+    passes: [['--version']],
+  },
+  {
+    label: 'package.json pins no native compiler, and no tsc starts',
+    printed: 'Version 7.0.2\n',
+    manifest: JSON.stringify({ devDependencies: {} }),
+    expected: 'package.json names no @typescript/native in devDependencies, and the typecheck row runs that compiler',
+    passes: [],
+  },
+];
+
+test.each([...COMPILER_CASES])('typecheck: $label', async ({ printed, manifest, expected, passes }: CompilerCase) => {
+  plantTree();
+  if (manifest !== undefined) {
+    writeFileSync('package.json', manifest);
+  }
+  answer = (cmd: readonly string[]): Answer =>
+    tool(cmd) === 'tsc' && cmd.includes('--version') ? { stdout: printed } : passing(cmd);
+
+  expect(await outcome(() => row('typecheck').check(false))).toBe(expected);
+  expect(callsToTool('tsc').map((call) => call.cmd.slice(BUNX.length + 1))).toEqual(passes.map((pass) => [...pass]));
 });
 
 /* ///// The ShellCheck stand-in and the canaries ///// */

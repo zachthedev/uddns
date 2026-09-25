@@ -13,7 +13,7 @@
   // <name>.<subdomain>.workers.dev URL.
 
   // account_id is intentionally absent: wrangler reads CLOUDFLARE_ACCOUNT_ID
-  // from the environment (GitHub Actions variable in CI, .env.local locally).
+  // from the environment (an environment secret in CI, .env.local locally).
 
   // KV namespace caching the last known IP address per record.
   // No id: wrangler reuses the namespace the deployed Worker holds under this

@@ -21,8 +21,11 @@ env:
   MISE_ENV: ''
   MISE_AUTO_ENV: 'false'
 
+# A pull request's group is its ref, so a new push cancels the run it replaces. A push to main
+# groups by commit: GitHub keeps one pending run per group and cancels the older pending one,
+# so a ref group would leave the middle push of a burst with no gate result.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -73,9 +76,9 @@ jobs:
       # --ignore-scripts: no package's install script runs before the gate. The gate needs none,
       # and no hook runs here.
       - run: bun install --frozen-lockfile --ignore-scripts
-      # The gate by its file, not through bun run, so no node_modules/.bin sits ahead of PATH
-      # before the gate's first check refuses a tracked node_modules path. --no-env-file, as every
-      # start of the gate has, so no env file on disk sets a variable in it.
+      # The gate by its file, not through bun run, so no node_modules/.bin sits ahead of PATH,
+      # where a tracked node_modules/.bin/bun would run in place of the gate. --no-env-file, as
+      # every start of the gate has, so no env file on disk sets a variable in it.
       - run: bun --no-env-file scripts/check.ts
 
   # Deviates from the handbook's kickstart, which has no secret scan. The handbook's Gate section

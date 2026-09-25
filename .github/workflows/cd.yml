@@ -16,7 +16,8 @@ on:
     branches: [main]
   # Deviates from the handbook's kickstart, whose cd.yml runs on a push alone. A manual run
   # deploys without a release: a fork's first deploy, where the releaser app's environment is
-  # absent and release-pr fails, and a rollback to an older tag (docs/deploy.md#operating-it).
+  # absent and release-pr fails, and a rollback to a tag older than the Worker versions Cloudflare
+  # keeps (docs/deploy.md#operating-it).
   workflow_dispatch:
 
 permissions: {}
@@ -65,8 +66,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Named so the deploy shows up as a deployment, carries protection rules, and holds the
-    # values the deploy reads: identifiers as variables, the two access-granting values as
-    # secrets. Both paths into production run through here.
+    # values the deploy reads, every one of them a secret. Both paths into production run
+    # through here.
     environment: production
     # The deploy applies D1 migrations, which read the applied-migrations table and then write:
     # two overlapping runs can each see the same migration as pending, and the later upload
@@ -103,15 +104,16 @@ jobs:
       # read anywhere: wrangler reuses the KV namespace and D1 database the
       # deployed Worker holds under the binding names in wrangler.jsonc.
       #
-      # Only the two values that grant access are secrets. The two identifiers
-      # are environment variables, so they stay readable in the run log rather
-      # than masked, and an unset one arrives as an empty string. CUSTOM_DOMAIN
-      # and ACCESS_KEY are optional: an empty domain leaves the Worker on its
-      # workers.dev URL and an empty access key skips the secret sync.
+      # A public identifier would be a variable. The account id and the custom
+      # domain are private identifiers and the token and the access key are
+      # credentials, so all four are secrets, which the run log masks. An unset
+      # one arrives as an empty string. CUSTOM_DOMAIN and ACCESS_KEY are
+      # optional: an empty domain leaves the Worker on its workers.dev URL and
+      # an empty access key skips the secret sync.
       - name: Deploy Worker
         run: bun run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
           ACCESS_KEY: ${{ secrets.ACCESS_KEY }}

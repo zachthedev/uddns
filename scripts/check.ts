@@ -8,22 +8,28 @@
  * is the list CONTRIBUTING.md points at. CI's gate job runs this file on three
  * platforms, so a green run here is a green run there.
  *
- * No row resolves a tool from the machine's PATH. Bun is the process running
- * this file, every package runs from its absolute path under node_modules, and
- * every other tool resolves through `mise which`. Every tool that searches for
- * a config runs with its one config named. Before any row, the gate refuses to
- * run beside a tracked env file Bun loads, a tracked `.npmrc`, a tracked path
- * under node_modules, a config a tool would read in place of the one the gate
- * names, a bunfig.toml key beside the install cooldown, a .prettierrc naming a
- * plugin or a shared config module, anything that would steer how Bun
- * resolves an import, a package patch, a package bun.lock
- * installs that node_modules lacks, a workflow shell ShellCheck never reads,
- * or a root entry named like a program or read as the ShellCheck stand-in's
- * path. No config's text is held: code-owner review is the control on a change
- * to one. Every row that walks the tree says how many files it checked and
- * fails when that is none. The rows that run the repository's own code come
- * last, and the preflight runs again after each. No row carries a deadline:
- * the CI job's timeout-minutes bounds the gate.
+ * No row resolves a tool from the machine's PATH. The programs the gate
+ * expects there, git, mise and gh, are the prerequisites CONTRIBUTING.md#setup
+ * names. Bun is the process running this file, every JavaScript tool starts
+ * through `bun x --bun --no-install` once the checkout's node_modules/.bin
+ * holds it, and every other tool resolves through `mise which`. Every tool
+ * that searches for a config runs with its one config named. Before any row,
+ * the gate refuses to run beside a config a tool would read in place of the
+ * one the gate names, a tracked env file Bun loads, a project config outside
+ * the named paths, a node_modules below the root, a JSON key Bun and the
+ * shared commits job read two ways, a patch a package.json names, anything
+ * that would steer how Bun resolves the gate's own imports, a workflow the
+ * actionlint and zizmor rows would not read, or an inline zizmor waiver under
+ * .github. No config's text is held: code-owner review is the control on a
+ * change to one. The other files that run code before the gate's first line,
+ * such as a bunfig.toml preload, are refused before a merge by the shared
+ * commits and workflows jobs. A pull request cannot edit those jobs at the pin
+ * ci.yml calls, and code-owner review of .github/workflows/ is the control on
+ * a change to that pin or to the job that runs this file. Every row that walks
+ * the tree says how many files it checked and fails when that is none. The
+ * rows that run the repository's own code come last, and the preflight runs
+ * again after each. No row carries a deadline: the CI job's timeout-minutes
+ * bounds the gate.
  *
  * CI and the push hook start this file as `bun --no-env-file scripts/check.ts`,
  * not through `bun run`, because the script runner puts the checkout's
@@ -36,16 +42,18 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { styleText } from 'node:util';
-// Every module imported here reads Bun and node: built-ins alone, so nothing
-// under node_modules loads before the preflight in main() refuses a planted
-// package. tools.ts imports zod and the format:check row imports prettier, so
-// each loads where a row needs it, once the preflight found it in the
-// checkout's node_modules rather than a parent's. github.ts takes every GitHub
-// token out of the environment when it loads, before any row starts a process.
+import type * as Prettier from 'prettier';
+// Every module imported here reads Bun and node: built-ins alone, so the
+// preflight runs and prints on a checkout with no install. tools.ts imports
+// zod and the format:check row imports prettier, each by its path under the
+// checkout's node_modules, so a missing install fails the row that needs it.
+// github.ts takes every GitHub token out of the environment when it loads,
+// before any row starts a process.
 import { githubToken } from './github';
 import {
   actionlintFinished,
   comparable,
+  compilerFinding,
   files,
   ignoreCommentFindings,
   inheritedCallFindings,
@@ -55,9 +63,10 @@ import {
   unreadSourceFinding,
   zizmorCompleted,
 } from './rows';
-import { describe, type Finished, fold, plain, printable, quote, run } from './run';
+import { describe, type Finished, fold, git, jsTool, plain, printable, quote, run } from './run';
 import {
   ESLINT_CONFIG,
+  isTable,
   PRETTIERIGNORE,
   PRETTIERRC,
   startupFindings,
@@ -71,18 +80,21 @@ import {
 const BUN = process.execPath;
 
 /**
- * The flag every Bun a row starts gets first, so no env file on disk sets a
- * variable inside a row's tool. Bun 1.4.2 honors it over all eight names it
- * loads, in every mode.
+ * The flag every Bun the gate starts directly gets first, so no env file on
+ * disk sets a variable inside the row: the scripts:test run and the ShellCheck
+ * stand-in. Bun 1.4.2 honors it over all eight names it loads, in every mode.
+ * `bun x` ignores it, so no JavaScript tool gets it.
  */
 const NO_ENV_FILE = '--no-env-file';
 
 /**
- * The checkout's node_modules as an absolute path. The gate runs from the
- * root. Bun runs a package.json script named like a relative entry that is
- * missing, and fails with "Module not found" on a missing absolute one.
+ * Prettier's module entry under the checkout's node_modules, by path, so a
+ * missing install fails the format:check row rather than loading a copy from
+ * a parent directory or installing one at run time. The specifier is held in
+ * a variable, so tsc takes the types from the `import type` above and never
+ * resolves the untyped file.
  */
-const PACKAGES = join(process.cwd(), 'node_modules');
+const PRETTIER_ENTRY = '../node_modules/prettier/index.mjs';
 
 /**
  * How many characters of file arguments one command carries. Windows caps a
@@ -92,7 +104,7 @@ const ARGUMENT_BUDGET = 24_000;
 
 // ShellCheck reads extra flags from SHELLCHECK_OPTS whatever actionlint's --norc
 // says, and one can exclude any finding, so no process the gate starts gets it.
-// run() withholds the variables every Bun reads before its own arguments.
+// run() withholds BUN_OPTIONS the same way.
 delete process.env['SHELLCHECK_OPTS'];
 
 /** A row of the gate: its name, what it checks, and the check itself. */
@@ -136,23 +148,6 @@ async function expectClean(
 }
 
 /**
- * The environment every git call in a row runs under: the gate's own, with
- * every inherited `GIT_*` variable removed.
- *
- * @remarks
- * A git hook can export `GIT_DIR` and `GIT_INDEX_FILE`, and either points git
- * at a repository or an index other than the working directory's. With them
- * gone, git finds the repository from the directory alone.
- */
-function gitEnv(): Readonly<Record<string, undefined>> {
-  return Object.fromEntries(
-    Object.keys(process.env)
-      .filter((name) => /^GIT_/i.test(name))
-      .map((name) => [name, undefined]),
-  );
-}
-
-/**
  * The tracked files `pathspecs` match, relative to the root, from one
  * `git ls-files`, less any the working tree no longer holds.
  *
@@ -161,7 +156,7 @@ function gitEnv(): Readonly<Record<string, undefined>> {
  * checkout holds exactly these. A new file counts once it is added.
  */
 async function trackedFiles(...pathspecs: string[]): Promise<string[]> {
-  const finished = await run(['git', 'ls-files', '-z', '--', ...pathspecs], gitEnv());
+  const finished = await git(['ls-files', '-z', '--', ...pathspecs]);
   if (finished.exitCode !== 0) {
     throw new Error(`git ls-files ${describe(finished)}`);
   }
@@ -214,8 +209,8 @@ const TEST_ENV: Readonly<Record<string, string>> = { CI: 'true' };
  * reads one name in any case, so both spellings there read one value.
  *
  * Deviates from the handbook: the Bun kickstart's rows set no NO_PROXY. The
- * package.json test scripts add the same names, and CONTRIBUTING.md#setup
- * records why.
+ * package.json test scripts add the same names, and
+ * CONTRIBUTING.md#troubleshooting records why.
  */
 export function loopbackUnproxied(): Readonly<Record<string, string>> {
   const own = [process.env['NO_PROXY'], process.env['no_proxy']].filter(
@@ -256,27 +251,39 @@ async function tools(): Promise<undefined> {
 /** The TypeScript projects the typecheck row checks, one tsc pass each. */
 export const PROJECTS: readonly string[] = [TSCONFIG, 'tests/tsconfig.json', 'scripts/tsconfig.json'];
 
-// The native TypeScript 7 compiler, called by its alias's path because the
-// 6.x `typescript` package that typescript-eslint needs ships a tsc of its
-// own. Each project is named, so tsc never searches past the checkout for a
-// config, and scripts/ carries its own, so the root one never reaches the
-// gate's module resolution. --listFiles names every file the program read, so
-// the row counts the ones from the repository, and fails on a tracked
-// TypeScript file that no project read.
+/** The package.json name of the native TypeScript 7 compiler the typecheck row runs. */
+const NATIVE = '@typescript/native';
+
+// The native TypeScript 7 compiler, from the `@typescript/native` alias. The
+// 6.x `typescript` package that typescript-eslint needs ships a tsc too, and
+// bun install links a command two packages claim to the one whose name sorts
+// first, so node_modules/.bin/tsc is the alias's. The row first holds
+// `tsc --version` to the major package.json pins for the alias, so a renamed
+// alias or another tie-break turns it red. Each project is named, so tsc never
+// searches past the checkout for a config, and scripts/ carries its own, so
+// the root one never reaches the gate's module resolution. --listFiles names
+// every file the program read, so the row counts the ones from the
+// repository, and fails on a tracked TypeScript file that no project read.
 async function typecheck(): Promise<string> {
+  const manifest: unknown = JSON.parse(await Bun.file('package.json').text());
+  const spec =
+    isTable(manifest) && isTable(manifest['devDependencies']) ? manifest['devDependencies'][NATIVE] : undefined;
+  if (typeof spec !== 'string') {
+    throw new Error(`package.json names no ${NATIVE} in devDependencies, and the typecheck row runs that compiler`);
+  }
+  const version = await run([...jsTool('tsc'), '--version']);
+  if (version.exitCode !== 0) {
+    throw new Error(`tsc --version ${describe(version)}`);
+  }
+  const other = compilerFinding(version.stdout, spec);
+  if (other !== undefined) {
+    throw new Error(other);
+  }
   const root = comparable('.') + sep;
   const counts: string[] = [];
   const checked = new Set<string>();
   for (const project of PROJECTS) {
-    const finished = await run([
-      BUN,
-      NO_ENV_FILE,
-      join(PACKAGES, '@typescript/native/bin/tsc'),
-      '--noEmit',
-      '--listFiles',
-      '--project',
-      project,
-    ]);
+    const finished = await run([...jsTool('tsc'), '--noEmit', '--listFiles', '--project', project]);
     const lines = plain(finished.stdout).split('\n');
     const listed = lines.filter((line) => isAbsolutePath(line));
     if (finished.exitCode !== 0) {
@@ -315,57 +322,54 @@ const TYPES = 'worker-configuration.d.ts';
 /** The one wrangler config, named because wrangler reads a wrangler.json ahead of it. */
 const WRANGLER_CONFIG = 'wrangler.jsonc';
 
-// The cf-typegen:check script's three steps, with wrangler from its path.
+// The cf-typegen:check script's three steps, with wrangler through `bun x`.
 // git diff reads the worktree against the index, so a stale index fails on
 // purpose, and a file git does not track passes git diff, so the first read
 // refuses one. --error-unmatch refuses an untracked file whether or not an
-// ignore rule names it. --no-ext-diff, so a diff.external from the
-// environment cannot answer for it. A wrangler that fails leaves the file
-// deleted, so the row restores the tracked copy before it goes red.
+// ignore rule names it. --no-ext-diff, so a diff.external in the repository's
+// own config cannot answer for it. A wrangler that fails leaves the file
+// deleted, so the row restores the tracked copy before it goes red, and it
+// checks for wrangler before it deletes anything.
 // Deviates from the handbook: the Bun kickstart's gate has no wrangler row.
 // The Worker's bindings are typed from wrangler.jsonc, and wrangler types runs
 // the build command that file names, so this is a code row.
 export async function cfTypegen(): Promise<undefined> {
-  const tracked = await run(['git', 'ls-files', '--error-unmatch', '--', TYPES], gitEnv());
+  const tracked = await git(['ls-files', '--error-unmatch', '--', TYPES]);
   if (tracked.exitCode !== 0) {
     throw new Error(`${TYPES} is not tracked. Regenerate it with bun run cf-typegen, then: git add ${TYPES}`);
   }
+  const wrangler = jsTool('wrangler');
   await rm(TYPES, { force: true });
   const generated = await run(
-    [
-      BUN,
-      NO_ENV_FILE,
-      join(PACKAGES, 'wrangler/bin/wrangler.js'),
-      'types',
-      '--config',
-      WRANGLER_CONFIG,
-      '--env-file',
-      '.dev.vars.template',
-    ],
+    [...wrangler, 'types', '--config', WRANGLER_CONFIG, '--env-file', '.dev.vars.template'],
     loopbackUnproxied(),
   );
   if (generated.exitCode !== 0) {
-    const restored = await run(['git', 'checkout', '--', TYPES], gitEnv());
+    const restored = await git(['checkout', '--', TYPES]);
     const kept = restored.exitCode === 0 ? '' : `. git could not restore ${TYPES}: it ${describe(restored)}`;
     throw new Error(`wrangler types ${describe(generated)}${kept}`);
   }
-  await expectClean(`git diff over ${TYPES}`, ['git', 'diff', '--no-ext-diff', '--exit-code', '--', TYPES], gitEnv());
+  const diffed = await git(['diff', '--no-ext-diff', '--exit-code', '--', TYPES]);
+  if (diffed.exitCode !== 0) {
+    throw new Error(`git diff over ${TYPES} ${describe(diffed)}`);
+  }
 }
 
 /* ///// format:check ///// */
 
 // Prettier names no file it checked, so the row hands it every tracked file
 // Prettier would format, decided by Prettier's own getFileInfo against the one
-// ignore file, and counts that list. getFileInfo runs inside the gate, so it
-// is told to resolve no config, which could load a plugin here. The preflight
-// refuses a plugin in .prettierrc, which names no parser or override either,
-// so the inferred parser is the same either way. --ignore-path
-// names .prettierignore alone, so .gitignore never narrows it, and --config
-// names the one config, so Prettier searches for no other file and a config
-// under a subdirectory never loads. --no-editorconfig keeps any .editorconfig
-// from setting an option.
+// ignore file, and counts that list. getFileInfo runs in the gate's process
+// and resolves the config nearest each file unless told not to, a package.json
+// prettier key and the plugins it names included, so resolveConfig is off.
+// .prettierrc holds formatting options alone, under review, so it names no
+// parser and the inferred parser is the same either way. --ignore-path names
+// .prettierignore alone, so .gitignore never narrows it, and --config names
+// the one config, so Prettier searches for no other file and a config under a
+// subdirectory never loads. --no-editorconfig keeps any .editorconfig from
+// setting an option.
 async function formatCheck(): Promise<string> {
-  const { getFileInfo } = await import('prettier');
+  const { getFileInfo } = (await import(PRETTIER_ENTRY)) as typeof Prettier;
   const checked: string[] = [];
   for (const path of await trackedFiles()) {
     const info = await getFileInfo(path, { ignorePath: PRETTIERIGNORE, resolveConfig: false });
@@ -387,9 +391,7 @@ async function formatCheck(): Promise<string> {
   }
   for (const batch of batches(checked)) {
     await expectClean('prettier', [
-      BUN,
-      NO_ENV_FILE,
-      join(PACKAGES, 'prettier/bin/prettier.cjs'),
+      ...jsTool('prettier'),
       '--check',
       '--config',
       PRETTIERRC,
@@ -428,7 +430,7 @@ async function taplo(): Promise<string> {
     const missed = batch.filter((path) => !reported.has(comparable(path)));
     if (missed.length > 0 || reported.size !== batch.length) {
       throw new Error(
-        `taplo checked ${files(reported.size)} of the ${files(batch.length)} handed to it. Not checked: ${missed.join(', ')}. ${TAPLO_CONFIG} decides which it reads`,
+        `taplo checked ${files(reported.size)} of the ${files(batch.length)} handed to it. Not checked: ${missed.map((path) => quote(path)).join(', ')}. ${TAPLO_CONFIG} decides which it reads`,
       );
     }
   }
@@ -450,26 +452,45 @@ interface LintMessage {
 interface LintResult {
   readonly filePath: string;
   readonly messages: readonly LintMessage[];
+  /** The reports a directive in the file suppressed, which ESLint lists whatever the directive says. */
+  readonly suppressedMessages?: readonly LintMessage[];
 }
 
 /** Whether `value`, parsed from ESLint's json output, is one file's result. */
 function isLintResult(value: unknown): value is LintResult {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const suppressed = (value as { suppressedMessages?: unknown }).suppressedMessages;
   return (
-    typeof value === 'object' &&
-    value !== null &&
     typeof (value as { filePath?: unknown }).filePath === 'string' &&
-    Array.isArray((value as { messages?: unknown }).messages)
+    Array.isArray((value as { messages?: unknown }).messages) &&
+    (suppressed === undefined || Array.isArray(suppressed))
   );
 }
+
+/**
+ * The rule no directive may suppress: the gate's own rule, which checks the
+ * reason on every waiver.
+ *
+ * @remarks
+ * ESLint applies a directive to the problems at its own position, so a
+ * directive that names this rule suppresses the rule's report on that same
+ * directive, and a block disable of it silences every waiver up to its enable.
+ * The json formatter lists each suppressed report under `suppressedMessages`,
+ * which no directive can empty, so the lint row refuses one there.
+ *
+ * Deviates from the handbook: the Bun kickstart's lint row reads `messages`
+ * alone.
+ */
+const UNWAIVABLE_RULE = 'gate/visible-reason';
 
 // The json formatter names every file ESLint linted, so the row counts them
 // and prints each problem itself. --config names the one config, so ESLint
 // runs no eslint.config.* nearer a file than the root.
 async function lint(): Promise<string> {
   const finished = await run([
-    BUN,
-    NO_ENV_FILE,
-    join(PACKAGES, 'eslint/bin/eslint.js'),
+    ...jsTool('eslint'),
     '--config',
     ESLINT_CONFIG,
     '.',
@@ -490,12 +511,25 @@ async function lint(): Promise<string> {
   const problems = results.flatMap((result) =>
     result.messages.map(
       (message) =>
-        `${result.filePath}:${String(message.line ?? 0)}:${String(message.column ?? 0)}  ${message.severity === 2 ? 'error' : 'warning'}  ${message.message ?? ''}  ${message.ruleId ?? ''}`,
+        `${quote(result.filePath)}:${String(message.line ?? 0)}:${String(message.column ?? 0)}  ${message.severity === 2 ? 'error' : 'warning'}  ${message.message ?? ''}  ${message.ruleId ?? ''}`,
     ),
+  );
+  const waived = results.flatMap((result) =>
+    (result.suppressedMessages ?? [])
+      .filter((message) => message.ruleId === UNWAIVABLE_RULE)
+      .map(
+        (message) =>
+          `${quote(result.filePath)}:${String(message.line ?? 0)}:${String(message.column ?? 0)}  a directive suppresses ${UNWAIVABLE_RULE} here, and no directive may waive it  ${message.message ?? ''}`,
+      ),
   );
   if (finished.exitCode !== 0) {
     throw new Error(
-      `eslint exited ${String(finished.exitCode)} over ${files(results.length)}:\n${[...problems, finished.stderr.trim()].filter((line) => line.length > 0).join('\n')}`,
+      `eslint exited ${String(finished.exitCode)} over ${files(results.length)}:\n${[...problems, ...waived, finished.stderr.trim()].filter((line) => line.length > 0).join('\n')}`,
+    );
+  }
+  if (waived.length > 0) {
+    throw new Error(
+      `eslint reported ${String(waived.length)} ${UNWAIVABLE_RULE} ${waived.length === 1 ? 'problem' : 'problems'} a directive suppressed, and the rule that checks waivers takes none:\n${waived.join('\n')}`,
     );
   }
   if (results.length === 0) {
@@ -606,7 +640,9 @@ async function actionlint(): Promise<string> {
     const linted = actionlintFinished(finished.stderr);
     const unlinted = batch.filter((path) => !linted.has(path));
     if (unlinted.length > 0) {
-      throw new Error(`actionlint finished no lint of ${unlinted.join(', ')}: ${describe(report)}`);
+      throw new Error(
+        `actionlint finished no lint of ${unlinted.map((path) => quote(path)).join(', ')}: ${describe(report)}`,
+      );
     }
   }
   return files(workflows.length);
@@ -653,7 +689,7 @@ async function zizmor(quick: boolean): Promise<string> {
   const unaudited = workflows.filter((path) => !completed.has(path));
   if (completed.size === 0 || unaudited.length > 0) {
     throw new Error(
-      `zizmor completed ${files(completed.size)}, and these tracked workflows were not among them: ${unaudited.join(', ') || 'none'}`,
+      `zizmor completed ${files(completed.size)}, and these tracked workflows were not among them: ${unaudited.map((path) => quote(path)).join(', ') || 'none'}`,
     );
   }
   const held = await inheritedCallsHeld(binary('zizmor'));
@@ -788,12 +824,12 @@ export function vitestCount(finished: Finished, allowed: number = VITEST_SKIPS_A
 // refuse `.only`, which would otherwise run alone and report the rest as
 // skipped. Deviates from the handbook: the Bun kickstart's test row runs bun
 // test. The Worker's tests run inside workerd through @cloudflare/vitest-plugin,
-// which runs under vitest alone.
+// which runs under vitest alone, so vitest starts through `bun x`.
 async function test(): Promise<string> {
-  const finished = await run(
-    [BUN, NO_ENV_FILE, join(PACKAGES, 'vitest/vitest.mjs'), 'run', '--coverage', '--config', VITEST_CONFIG],
-    { ...loopbackUnproxied(), ...TEST_ENV },
-  );
+  const finished = await run([...jsTool('vitest'), 'run', '--coverage', '--config', VITEST_CONFIG], {
+    ...loopbackUnproxied(),
+    ...TEST_ENV,
+  });
   // The report and the coverage table print above the row's line, so they
   // land in the log rather than in its one-line message.
   console.log(printable([finished.stdout, finished.stderr].join('\n').trim()));
@@ -818,7 +854,7 @@ export const rows: readonly Row[] = [
   {
     name: 'typecheck',
     checks:
-      'tsc --noEmit over src, tests and scripts, one --project each, counting the files each read, and every tracked TypeScript file read by one',
+      'tsc --version reporting the major package.json pins, then tsc --noEmit over src, tests and scripts, one --project each, counting the files each read, and every tracked TypeScript file read by one',
     check: typecheck,
   },
   {
@@ -852,7 +888,8 @@ export const rows: readonly Row[] = [
   },
   {
     name: 'lint',
-    checks: 'eslint over the tree with eslint.config.ts alone and no warnings allowed, counting the files it linted',
+    checks:
+      'eslint over the tree with eslint.config.ts alone and no warnings allowed, counting the files it linted, and no gate/visible-reason report a directive suppressed',
     check: lint,
     runsCode: true,
   },
@@ -901,13 +938,11 @@ async function main(): Promise<number> {
   console.log(dim(quick ? 'check:quick' : 'check'));
   console.log();
 
-  // Bun loaded any env file here into this process, ran any preload
-  // bunfig.toml names, and resolved this file's imports before this line. A
-  // tracked .npmrc steered the install, and a file tracked under node_modules
-  // stands in for what bun install would put there. So no row runs beside
-  // any of them. This comes before any other process the gate starts. A row
-  // that runs the repository's code can write any file the preflight reads,
-  // so the preflight runs again after one, before any later row.
+  // The preflight refuses a config a row's tool would read in place of the one
+  // the row names, so no row runs beside one. It comes before any other
+  // process the gate starts but git. A row that runs the repository's code can
+  // write any file the preflight reads, so the preflight runs again after one,
+  // before any later row.
   const preflight = async (after: string): Promise<boolean> => {
     const refused = [...(await trackedFindings()), ...(await startupFindings())];
     if (refused.length > 0) {

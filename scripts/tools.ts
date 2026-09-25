@@ -14,14 +14,16 @@
  * parser reads either address, so no parser can read one differently from
  * mise.
  *
- * This file imports zod from node_modules, so the gate loads it only once
- * the checks before its rows pass.
+ * This file imports zod by its path under the checkout's node_modules, so a
+ * missing install fails the row that loads it, rather than loading a copy
+ * from a parent directory or installing one at run time. The gate loads it
+ * only once the checks before its rows pass.
  */
 
 import { dlopen, FFIType, type Pointer, ptr, toArrayBuffer } from 'bun:ffi';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { z } from 'zod';
+import { z } from '../node_modules/zod/index.js';
 import { describe, type Finished, fold, plain, PROXY_NAMES, quote, run } from './run';
 import { directoryEntries, isTable, LOCK, PINS, quoteValue, sameValue } from './startup';
 
@@ -800,12 +802,12 @@ export async function resolve(): Promise<ReadonlyMap<string, string>> {
     }
     const printed = await run([path, tool.versionFlag]);
     if (printed.exitCode !== 0) {
-      throw new Error(`${path} ${tool.versionFlag} ${describe(printed)}`);
+      throw new Error(`${quote(path)} ${tool.versionFlag} ${describe(printed)}`);
     }
     const reported = /\d+\.\d+\.\d+/.exec(plain(`${printed.stdout}\n${printed.stderr}`))?.[0] ?? '';
     if (reported !== version) {
       throw new Error(
-        `${path} reports ${tool.key} ${reported}, and ${PINS} pins ${quote(version)}. Install it with: mise install`,
+        `${quote(path)} reports ${tool.key} ${reported}, and ${PINS} pins ${quote(version)}. Install it with: mise install`,
       );
     }
     resolved.set(tool.key, path);

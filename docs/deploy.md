@@ -56,9 +56,24 @@ when the environment carries one. The custom domain, when set, reaches wrangler 
 Fork this repository, create the D1 audit database once (the CLI path, step 2), then create an
 environment named `production` under the fork's Settings. The deploy job in
 [`.github/workflows/cd.yml`](../.github/workflows/cd.yml) declares that environment and reads
-everything from it: the job's `env:` block names each value and says whether it is a variable or a
-secret. Identifiers are variables and only the values that grant access are secrets, so the identifiers
-stay readable in the run log. No resource ID goes anywhere.
+everything from it, and the job's `env:` block names each value. Every value falls in one of three
+classes. A public identifier is a variable. A private identifier or a credential is a secret, so the run
+log masks it. `CLOUDFLARE_ACCOUNT_ID` and the optional `CUSTOM_DOMAIN` are private identifiers, and
+`CLOUDFLARE_API_TOKEN` and the optional `ACCESS_KEY` are credentials, so the fork sets all four as
+secrets of the `production` environment, each with `gh secret set <NAME> --env production` from the
+fork's clone. No resource ID goes into a file.
+
+Releases deploy, so a push to `main` reaches production only through the releaser app. Before the first
+release, create a GitHub App for the fork, install it on the fork, and create an environment named
+`release-pr` holding the app's client id as the variable `RELEASER_CLIENT_ID`, a public identifier, and
+its private key as the secret `RELEASER_PRIVATE_KEY`. The `release-pr` job reads both. Without them, it
+fails on every push to `main`, and the deploy job never runs. Until the app is in place, a manual run of
+the `cd` workflow deploys: `gh workflow run cd.yml` from the fork's clone, or Run workflow on the
+workflow's page ([Releasing deploys](#releasing-deploys)).
+
+Give each environment a deployment branch policy, so a workflow pushed on any other branch cannot read
+its secrets. `production` admits `main` and the release tags, `v*`, which a manual deploy run against a
+tag needs ([Operating it](#operating-it)). `release-pr` admits `main` alone.
 
 The access key is 32 hexadecimal characters (16 random bytes). One comes from `openssl rand -hex 16`,
 or on a machine without openssl from
@@ -108,7 +123,7 @@ pull request is the owner's act.
 - Logs are Workers Logs with the query string redacted, because it carries the caller's ntfy topic and
   the hostnames it manages. The handler logs every request the rate limiter admits and its outcome; a
   flood the limiter turns away writes no line.
-- The `audit` workflow runs `bun audit` over the whole lock file, and zizmor's online audits over the
+- The `audit` workflow runs the `audit` script over the whole lock file, and zizmor's online audits over the
   pinned actions, once a day. A red run is a report, never a check: it means work to pick up, a
   direct bump through Renovate's next security fix or a transitive one by hand. Between an advisory
   landing and a fix, the worker runs vulnerable code, and that run is the only thing that says so.
@@ -118,8 +133,12 @@ pull request is the owner's act.
   activity. If Renovate stops, the dependency update and audit schedules go quiet together and are then
   disabled. GitHub sends one email about the disable, to the last committer, and nothing after it, so
   check Renovate is still opening pull requests. `gh workflow enable` turns a disabled workflow back on.
-- Rollback is a manual run of the deploy workflow against the last good tag. The deploy applies
-  migrations and never reverts one, so the older revision then runs against the newer schema, and a
-  migration that drops or rewrites a column takes that rollback away.
+- Rollback is `wrangler rollback` from a clone logged in to the account, or Rollback on the Worker's
+  Deployments page in the Cloudflare dashboard. It makes one of the Worker's 100 most recent versions the
+  active deployment at once, with no build and no migration. D1 and KV keep their data, so the older
+  code runs against the newer schema, and a migration that drops or rewrites a column takes that
+  rollback away. Cloudflare refuses a rollback past a Durable Object class change, such as a class added
+  or renamed in `wrangler.jsonc`. A manual run of the deploy workflow against the last good tag is the
+  fallback for a version older than those. It applies migrations and never reverts one.
 - A caller reaching past its token's authority for 100 distinct names in a day logs a warning.
   [docs/usage.md](usage.md#refusals) says what counts and what the warning can and cannot catch.

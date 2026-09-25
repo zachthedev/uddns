@@ -4,9 +4,10 @@ name: audit
 # to pick up. Nothing merges, releases or deploys through this file. The pull request checks in
 # ci.yml hold what a change adds. This file reports what the world found about the tree since.
 #
-# bun audit reads every package in bun.lock, transitives included, against the live database and
-# exits non-zero at or above its audit level. The work is a direct bump through Renovate's next
-# security fix or a transitive one by hand with bun audit fix.
+# The package.json audit script runs bun audit, which reads every package in bun.lock, transitives
+# included, against the live database and exits non-zero at or above the script's audit level. The
+# work is a direct bump through Renovate's next security fix or a transitive one by hand with bun
+# audit fix.
 #
 # The workflows job runs zizmor's online audits over the pinned actions: a pinned commit outside
 # its action's repository, a stale action ref, a known-vulnerable action. Those answers change
@@ -35,10 +36,8 @@ jobs:
           bun-version-file: package.json
       # The verdict is a claim about an external database, and a clean verdict names no
       # endpoint. bun audit has no --registry flag, and this variable outranks bunfig.toml and
-      # a dotenv, so setting it here fixes the endpoint for the run.
-      # The package.json audit script, as the handbook's Advisories section runs it: it sets the
-      # high audit level, and it is the one home of the --ignore waivers
-      # CONTRIBUTING.md#dependencies records, so both apply to the daily report too.
+      # a dotenv, so setting it here fixes the endpoint for the run. The script, not bare bun audit,
+      # so its --audit-level and every --ignore waiver it carries apply to the daily report too.
       - run: bun run audit
         env:
           BUN_CONFIG_REGISTRY: https://registry.npmjs.org/

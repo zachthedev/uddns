@@ -6,7 +6,7 @@
 
 Paste the last line the gate prints. `CONTRIBUTING.md` names the command.
 
-<!-- On Windows, point TEMP at a short path first. docs/dev.md says why. -->
+<!-- On Windows, point TEMP at a short path first. CONTRIBUTING.md#troubleshooting says why. -->
 
 ```text
 

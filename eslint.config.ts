@@ -3,6 +3,7 @@ import eslint from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import prettierConfig from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
+import { gatePlugin } from './scripts/eslint-plugin';
 
 // typescript-eslint reads types through the TypeScript 6.x compiler API, which the native TypeScript 7 compiler
 // does not expose, so the `typescript` package it resolves stays on 6.x beside the `@typescript/native` alias the
@@ -29,12 +30,16 @@ export default defineConfig(
   // An inline ESLint directive names each rule it turns off and gives its
   // reason after `--`. The recommended set refuses a disable that names no
   // rule or is never closed, and require-description refuses one with no
-  // reason. ESLint reports a directive that silences nothing, and the lint row
-  // allows no warning.
+  // reason. The gate's visible-reason rule refuses a reason there or on a
+  // TypeScript waiver comment that holds no letter or digit once
+  // default-ignorable code points are removed. ESLint reports a directive
+  // that silences nothing, and the lint row allows no warning.
   comments.recommended,
   {
+    plugins: { gate: gatePlugin },
     rules: {
       '@eslint-community/eslint-comments/require-description': 'error',
+      'gate/visible-reason': 'error',
     },
   },
 
