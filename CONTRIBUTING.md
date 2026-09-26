@@ -370,19 +370,9 @@ Review refuses what no row checks, since each such file sits in the diff and run
 file beyond `commitlint.config.js` and `worker-configuration.d.ts`, a path below a personal file's name, and a
 tracked `.claude/settings.local.json`.
 
-Review also holds these lines of the workflows, which no row, test or shared job reads, since no repository test
-reads a workflow file:
-
-- CI's gate job starts the gate by its file, `bun --no-env-file scripts/check.ts`, never through `bun run`;
-- the gate job runs `jdx/mise-action` before the checkout, with `install`, `cache`, `env`, `export_path` and
-  `add_shims_to_path` off and an empty `github_token`;
-- `ci.yml` sets `MISE_OVERRIDE_CONFIG_FILENAMES`, `MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES`, `MISE_ENV` and
-  `MISE_AUTO_ENV` for every step;
-- the gate job and the deploy job each install once, with `bun install --frozen-lockfile --ignore-scripts`.
-
-The shared `workflows` job's actionlint and zizmor steps lint these files and audit them, and none of their checks
-holds any of the four. `CODEOWNERS` names the owner for `.github/workflows/`, and the default-branch ruleset
-requires that review.
+Review also holds the workflows' own lines, such as the gate job's start, its mise-action settings and the frozen
+installs. No row, test or shared job reads them. `CODEOWNERS` names the owner for `.github/workflows/`, and the
+default-branch ruleset requires that review.
 
 The `tools` row reads `mise.toml` and `mise.lock` against the expectations in `scripts/tools.ts`, and installs
 from the lockfile only after that read passes. `mise.toml` holds `[tools]`, `[tool_config]` and `[settings]`

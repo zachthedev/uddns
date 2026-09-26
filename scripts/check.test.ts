@@ -707,8 +707,7 @@ interface SelectCase {
 // Named rows run in the table's order, slow or not, and one unknown name or
 // flag refuses the whole run, so a mistyped name never selects nothing and
 // reads as a green gate, and a mistyped flag never runs the whole gate in its
-// place. The four refused old names are the rows' names before the
-// kickstart's.
+// place.
 const SELECT_CASES: readonly SelectCase[] = [
   {
     label: 'no argument selects every row, in the table order',
@@ -779,22 +778,22 @@ const SELECT_CASES: readonly SelectCase[] = [
     expected: { refusal: 'no such row: "zizmor". bun run check:rows lists them.' },
   },
   {
-    label: 'the old name actionlint is refused',
+    label: 'a tool the workflows row runs, actionlint, names no row and is refused',
     args: ['actionlint'],
     expected: { refusal: 'no such row: "actionlint". bun run check:rows lists them.' },
   },
   {
-    label: 'the old name zizmor is refused',
+    label: 'a tool the workflows row runs, zizmor, names no row and is refused',
     args: ['zizmor'],
     expected: { refusal: 'no such row: "zizmor". bun run check:rows lists them.' },
   },
   {
-    label: 'the old name taplo is refused',
+    label: 'the tool the toml row runs, taplo, names no row and is refused',
     args: ['taplo'],
     expected: { refusal: 'no such row: "taplo". bun run check:rows lists them.' },
   },
   {
-    label: 'the old name format:check is refused',
+    label: 'format:check, a package.json script that is not a row, is refused',
     args: ['format:check'],
     expected: { refusal: 'no such row: "format:check". bun run check:rows lists them.' },
   },
