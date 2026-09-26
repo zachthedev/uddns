@@ -223,8 +223,8 @@ const TEST_ENV: Readonly<Record<string, string>> = { CI: 'true' };
  * and vitest's workers pool then cannot reach the workerd they start. Windows
  * reads one name in any case, so both spellings there read one value.
  *
- * Deviates from the handbook: the Bun kickstart's rows set no NO_PROXY. The
- * package.json test scripts add the same names, and
+ * Deviates from the handbook's kickstart: the Bun kickstart's rows set no
+ * NO_PROXY. The package.json test scripts add the same names, and
  * CONTRIBUTING.md#troubleshooting records why.
  */
 export function loopbackUnproxied(): Readonly<Record<string, string>> {
@@ -345,9 +345,9 @@ const WRANGLER_CONFIG = 'wrangler.jsonc';
 // own config cannot answer for it. A wrangler that fails leaves the file
 // deleted, so the row restores the tracked copy before it goes red, and it
 // checks for wrangler before it deletes anything.
-// Deviates from the handbook: the Bun kickstart's gate has no wrangler row.
-// The Worker's bindings are typed from wrangler.jsonc, and wrangler types runs
-// the build command that file names, so this is a code row.
+// Deviates from the handbook's kickstart: the Bun kickstart's gate has no
+// wrangler row. The Worker's bindings are typed from wrangler.jsonc, and
+// wrangler types runs the build command that file names, so this is a code row.
 export async function cfTypegen(): Promise<undefined> {
   const tracked = await git(['ls-files', '--error-unmatch', '--', TYPES]);
   if (tracked.exitCode !== 0) {
@@ -495,8 +495,8 @@ function isLintResult(value: unknown): value is LintResult {
  * The json formatter lists each suppressed report under `suppressedMessages`,
  * which no directive can empty, so the lint row refuses one there.
  *
- * Deviates from the handbook: the Bun kickstart's lint row reads `messages`
- * alone.
+ * Deviates from the handbook's kickstart: the Bun kickstart's lint row reads
+ * `messages` alone.
  */
 const UNWAIVABLE_RULE = 'gate/visible-reason';
 
@@ -825,9 +825,10 @@ export function vitestCount(finished: Finished, allowed: number = VITEST_SKIPS_A
 // vitest with its config named, because vitest reads a vitest.config.ts ahead
 // of vitest.config.mts, and a vite.config.* after both. CI=true makes vitest
 // refuse `.only`, which would otherwise run alone and report the rest as
-// skipped. Deviates from the handbook: the Bun kickstart's test row runs bun
-// test. The Worker's tests run inside workerd through @cloudflare/vitest-plugin,
-// which runs under vitest alone, so vitest starts through `bun x`.
+// skipped. Deviates from the handbook's kickstart: the Bun kickstart's test row
+// runs bun test. The Worker's tests run inside workerd through
+// @cloudflare/vitest-plugin, which runs under vitest alone, so vitest starts
+// through `bun x`.
 async function test(): Promise<string> {
   const finished = await run([...jsTool('vitest'), 'run', '--coverage', '--config', VITEST_CONFIG], {
     ...loopbackUnproxied(),

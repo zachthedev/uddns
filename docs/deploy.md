@@ -109,12 +109,12 @@ the schema in production corresponds to a revision you can check out, instead of
 landed last.
 
 [release-please](https://github.com/googleapis/release-please) drives it. Once a releasable change lands
-on `main`, it opens one pull request titled `chore: release x.y.z` and keeps it up to date, carrying
-the version bump and the changelog entries for everything landed since the last release. Nothing ships
-while it sits there. Merging it is the release: the merge commit is tagged and a draft release is
-created, the `publish` job waits for the `release` environment's reviewer and flips the draft public,
-and the deploy runs against that revision. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) says which
-commit types make a change releasable.
+on `main`, it opens one pull request and keeps it up to date, carrying the version bump and the
+changelog entries for everything landed since the last release. `pull-request-title-pattern` in
+`release-please-config.json` sets its title. Nothing ships while it sits there. Merging it is the
+release: the merge commit is tagged and a draft release is created, the `publish` job waits for the
+`release` environment's reviewer and flips the draft public, and the deploy runs against that revision.
+[CONTRIBUTING.md](../CONTRIBUTING.md#releases) says which commit types make a change releasable.
 
 The release pull request is opened by the `zachthedev-releaser` app, so it gets the same checks as every
 other pull request. That is what the app is for: GitHub holds the CI run for a pull request opened by
