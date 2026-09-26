@@ -62,6 +62,8 @@ Tree rules, each held by the gate or review, with the reason in
 - Never give a tooling change a type that cuts a release ([why](CONTRIBUTING.md#what-never-happens)).
 - Never add a check as a workflow step ([why](CONTRIBUTING.md#what-never-happens)).
 - Never restate a list another file owns ([why](CONTRIBUTING.md#what-never-happens)).
+- Never give `package.json` an `overrides` block or an `--ignore` flag without its record
+  ([why](CONTRIBUTING.md#what-never-happens)).
 
 ## Deviations
 

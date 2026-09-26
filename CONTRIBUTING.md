@@ -216,10 +216,10 @@ disagrees with CI, [Troubleshooting](#troubleshooting) says why.
 `bun run check:quick` is the same gate without its test row, and the push hook runs it. `bun run check:rows`
 prints the rows and runs nothing. `bun run check <row>` runs the named rows, resolving the pinned binaries without
 installing them. Its first line names the rows and its last line counts them against the whole gate, so its
-output never reads as a gate run. A name no row carries, or a flag other than `--quick` and `--rows`, refuses the
-run before anything starts. Some rows share a name with a `package.json` script that runs the same tool by hand,
-and the script is not the row. The row names each config, hands Prettier, taplo, actionlint and zizmor the tracked
-files, and starts every JavaScript tool under the gate's own Bun.
+output never reads as a gate run. A name no row carries, or a flag `FLAGS` in `scripts/check.ts` does not name,
+refuses the run before anything starts. Some rows share a name with a `package.json` script that runs the same
+tool by hand, and the script is not the row. The row names each config, hands Prettier, taplo, actionlint and
+zizmor the tracked files, and starts every JavaScript tool under the gate's own Bun.
 
 CI and the push hook run the gate by its file, `bun --no-env-file scripts/check.ts`, so no `node_modules/.bin` sits
 ahead of `PATH`. The `check`, `check:quick` and `check:rows` scripts pass `--no-env-file` too, and so does every
@@ -360,7 +360,8 @@ any gate row reads them. A pull request cannot edit those jobs at the pin `ci.ym
 repeat them. Code-owner review of `.github/workflows/` is the control on a change to that pin, and on a change to
 the job that runs the gate. The shared jobs refuse:
 
-- a tracked `node_modules`, or a tracked path under one;
+- a tracked `node_modules`, or a tracked path under one, and every tracked symbolic link. The gate keeps its own
+  narrower link refusal for mise, in the `tools` row below;
 - a `bunfig.toml` holding any key but `[install] minimumReleaseAge`;
 - `paths` or `baseUrl` in a tracked `tsconfig.json` or `jsconfig.json` or in a file its `extends` chain reads;
 - an `exports` key in a tracked `package.json`, since a bare import of the package's own name resolves to it ahead
@@ -555,10 +556,11 @@ pinned tree, a checksum recorded by a third party, and a version alone.
 ## Releases
 
 [release-please](https://github.com/googleapis/release-please) runs under the `zachthedev-releaser` app on every
-push to `main`. Once a releasable change lands, it opens one pull request titled `chore: release x.y.z` and
-keeps it up to date. Merging it tags the merge commit and creates the GitHub Release as a draft, every time. The
-`publish` job flips the draft public under the `release` environment's reviewer, and the deploy runs against that
-revision. [docs/deploy.md](docs/deploy.md#releasing-deploys) says how the deploy follows.
+push to `main`. Once a releasable change lands, it opens one pull request and keeps it up to date.
+`pull-request-title-pattern` in `release-please-config.json` sets its title. Merging it tags the merge commit and
+creates the GitHub Release as a draft, every time. The `publish` job flips the draft public under the `release`
+environment's reviewer, and the deploy runs against that revision.
+[docs/deploy.md](docs/deploy.md#releasing-deploys) says how the deploy follows.
 
 release-please owns the version in `package.json`, `.release-please-manifest.json` and `CHANGELOG.md`. Nobody edits
 any of the three by hand.
