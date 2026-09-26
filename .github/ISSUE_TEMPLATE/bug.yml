@@ -41,7 +41,7 @@ body:
     attributes:
       label: uddns version
       description: The release you deployed, or the commit sha for a deployment from a branch.
-      placeholder: '1.0.2, or 6f9be1d'
+      placeholder: 'The release tag, or the commit sha you deployed'
     validations:
       required: true
   - type: dropdown

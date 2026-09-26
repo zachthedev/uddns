@@ -9,10 +9,9 @@
       "separateMajorMinor": false
     },
     {
-      "description": "typescript-eslint declares a typescript peer range below 6.1.0 and throws on a TypeScript 7 tree, so typescript stays on 6.x. Drop this rule once typescript-eslint supports TypeScript 7: https://typescript-eslint.io/users/dependency-versions",
+      "description": "typescript stays below 6.1.0, the top of typescript-eslint's typescript peer range, because typescript-eslint reads types through the 6.x compiler API that TypeScript 7 does not expose, until typescript-eslint supports TypeScript 7 and this rule and the @typescript/native alias both go: https://typescript-eslint.io/users/dependency-versions",
       "matchDepNames": ["typescript"],
-      "matchUpdateTypes": ["major"],
-      "enabled": false
+      "allowedVersions": "<6.1.0"
     }
   ]
 }

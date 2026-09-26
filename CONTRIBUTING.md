@@ -14,7 +14,7 @@ The machine needs:
   files through `git ls-files`, and the `cf-typegen:check` row diffs the types file against the index.
 - [gh](https://cli.github.com), optional. When `gh auth token` answers, the gate runs zizmor online. Otherwise
   zizmor runs offline and no token is needed.
-- [Node.js](https://nodejs.org), for `bun run dev` alone ([Running it](#running-it)).
+- [Node.js](https://nodejs.org), for `bun run dev` and `bun run deploy` alone ([Running it](#running-it)).
 
 Bun, git, mise and gh are every program the gate starts from `PATH`: Bun runs the gate, and the gate starts git,
 mise and gh by name. Every other program it runs is a package under `node_modules/` or a tool `mise which` names.
@@ -176,7 +176,7 @@ Generated files, and the command that writes each:
   The eslint-comments plugin and ban-ts-comment accept a reason of a soft hyphen, a word joiner or a Braille blank
   alone, and the rule refuses each. A directive that names the rule suppresses the rule's report on that directive,
   so the `lint` row refuses any `gate/visible-reason` report a directive suppressed. Nothing checks a reason on
-  Prettier's ignore comment, so the `format:check` row refuses the comment itself.
+  Prettier's ignore comment, so the `format` row refuses the comment itself.
 - An import carries `with { type: 'json' }` or no attribute, and a dynamic import takes no options. ESLint refuses
   any other attribute, since Bun runs a file of any extension as code under one naming a loader, and no row reads
   a `.txt` as code.
@@ -200,7 +200,7 @@ The gate's own tests, `scripts/*.test.ts`, run under `bun test` in the `scripts:
 APIs. Each case starts a stand-in, itself a Bun process, in place of every program the gate starts, and their
 `PATH` holds the stand-ins alone. So no case starts your gh, git or mise or reaches the network. The suite covers
 `scripts/rows.ts`, which holds what the rows conclude from their tools' output, and `scripts/check.test.ts` covers
-the command line each row starts.
+the command line each row starts and the rows a run's arguments select.
 
 ## The gate
 
@@ -214,9 +214,12 @@ you push. A new check is a row in `scripts/check.ts`, never a step in a workflow
 disagrees with CI, [Troubleshooting](#troubleshooting) says why.
 
 `bun run check:quick` is the same gate without its test row, and the push hook runs it. `bun run check:rows`
-prints the rows and runs nothing. Some rows share a name with a `package.json` script that runs the same tool by
-hand, and the script is not the row. The row names each config, hands Prettier, taplo, actionlint and zizmor the
-tracked files, and starts every JavaScript tool under the gate's own Bun.
+prints the rows and runs nothing. `bun run check <row>` runs the named rows, resolving the pinned binaries without
+installing them. Its first line names the rows and its last line counts them against the whole gate, so its
+output never reads as a gate run. A name no row carries, or a flag other than `--quick` and `--rows`, refuses the
+run before anything starts. Some rows share a name with a `package.json` script that runs the same tool by hand,
+and the script is not the row. The row names each config, hands Prettier, taplo, actionlint and zizmor the tracked
+files, and starts every JavaScript tool under the gate's own Bun.
 
 CI and the push hook run the gate by its file, `bun --no-env-file scripts/check.ts`, so no `node_modules/.bin` sits
 ahead of `PATH`. The `check`, `check:quick` and `check:rows` scripts pass `--no-env-file` too, and so does every
@@ -234,14 +237,14 @@ A row starts each JavaScript tool, tsc, Prettier, ESLint, wrangler and vitest, t
 under the Bun running the gate. First it checks that `node_modules/.bin` holds the tool as a file, through every link.
 When it does not, the row fails with "`<tool>` is not installed in this checkout: run bun install --frozen-lockfile, or
 bun install --frozen-lockfile --ignore-scripts in a worktree (CONTRIBUTING.md#setup).", since `bun x` would run a copy
-from elsewhere. The check covers the tool's own command alone. A package the tool loads, such as TypeScript 7's platform
-binary or esbuild's and workerd's, resolves from a parent directory's `node_modules/` when the checkout lacks it, and
-runs from there. On Windows the `.bin` entry is a copy of bunx's shim, a regular file that outlives a removed package,
-so the check passes and `bun x` then fails with "Module not found" rather than the message above. The gate imports its
-own two packages, zod and Prettier, by their paths under `node_modules/`, so a missing install fails the row that loads
-one. The gate does not check `node_modules/` against `bun.lock`: CI installs frozen before its gate, and a stale install
-is yours to refresh ([Setup](#setup)). The `typecheck` row first holds `tsc --version` to the major `package.json` pins
-for `@typescript/native`, so a `node_modules/.bin/tsc` that is the 6.x compiler turns it red
+from elsewhere. The check covers the tool's own command alone. A package the tool loads, such as the native compiler's
+platform binary or esbuild's and workerd's, resolves from a parent directory's `node_modules/` when the checkout lacks
+it, and runs from there. On Windows the `.bin` entry is a copy of bunx's shim, a regular file that outlives a removed
+package, so the check passes and `bun x` then fails with "Module not found" rather than the message above. The gate
+imports its own two packages, zod and Prettier, by their paths under `node_modules/`, so a missing install fails the
+row that loads one. The gate does not check `node_modules/` against `bun.lock`: CI installs frozen before its gate, and
+a stale install is yours to refresh ([Setup](#setup)). The `typecheck` row first holds `tsc --version` to the major
+`package.json` pins for `@typescript/native`, so a `node_modules/.bin/tsc` from the `typescript` package turns it red
 ([Dependencies](#dependencies)).
 
 The gate withholds `BUN_OPTIONS` and `SHELLCHECK_OPTS` from every process it starts, in every spelling. Bun reads
@@ -262,23 +265,23 @@ Every tool that searches for its own config runs with that config named: ESLint 
 Prettier with `--config .prettierrc` and `--no-editorconfig`, taplo with `--config .taplo.toml`, zizmor with
 `--config .github/zizmor.yml`, tsc with `--project`, vitest with `--config vitest.config.mts`, wrangler with
 `--config wrangler.jsonc`, and the commit hook's commitlint with `--config commitlint.config.js`. Each named form
-was measured to stop the tool's other config names, so the gate refuses none of those names. The `format:check`
-row also asks Prettier's API, inside the gate's own process, which tracked files it formats, and that call
-resolves no config at all, so no `package.json` beside a file loads a plugin into the gate. The gate holds no
-config's text: `CODEOWNERS` names the owner for every path, and the default-branch ruleset requires a code owner's
-review, so a change to a config is read before it merges.
+was measured to stop the tool's other config names, so the gate refuses none of those names. The `format` row
+also asks Prettier's API, inside the gate's own process, which tracked files it formats, and that call resolves
+no config at all, so no `package.json` beside a file loads a plugin into the gate. The gate holds no config's
+text: `CODEOWNERS` names the owner for every path, and the default-branch ruleset requires a code owner's review,
+so a change to a config is read before it merges.
 
 Every row that walks the tree says how many files it checked, and fails when that is none. The `typecheck` row
-also fails on a tracked TypeScript file that no project reads. The `format:check`, `taplo`, `actionlint` and
-`zizmor` rows hand their tool the tracked files, so a new file counts once `git add` names it, and `.gitignore`
-never hides a tracked one. The `format:check` row also refuses a Prettier ignore comment in any file it checks,
-since Prettier leaves the code after one unformatted and asks no reason. It matches the shape Prettier honors, a
-comment opener (`//`, `/*`, `#`, `<!--`, `{{!` or `{{!--`) then spacing then the keyword, so a document can name
-the keyword in prose or in backticks. The `taplo` row checks that taplo reports each file it was handed, and the
-`actionlint` and `zizmor` rows that their tool reports every tracked workflow. The `zizmor` row then runs zizmor
-again with no config and inline ignores off, so it sees every job that passes `secrets: inherit`, waived or not.
-Each such job calls a reusable workflow of `zachthedev/.github`, and a job calling anything else fails the row.
-Each file the `secrets-inherit` waiver names must hold such a job, so a waiver left behind fails the row too.
+also fails on a tracked TypeScript file that no project reads. The `format`, `toml` and `workflows` rows hand their
+tool the tracked files, so a new file counts once `git add` names it, and `.gitignore` never hides a tracked one.
+The `format` row also refuses a Prettier ignore comment in any file it checks, since Prettier leaves the code after
+one unformatted and asks no reason. It matches the shape Prettier honors, a comment opener (`//`, `/*`, `#`,
+`<!--`, `{{!` or `{{!--`) then spacing then the keyword, so a document can name the keyword in prose or in
+backticks. The `toml` row checks that taplo reports each file it was handed, and the `workflows` row that
+actionlint and zizmor each report every tracked workflow. The `workflows` row then runs zizmor again with no config
+and inline ignores off, so it sees every job that passes `secrets: inherit`, waived or not. Each such job calls a
+reusable workflow of `zachthedev/.github`, and a job calling anything else fails the row. Each file the
+`secrets-inherit` waiver names must hold such a job, so a waiver left behind fails the row too.
 
 actionlint runs ShellCheck through `scripts/shellcheck.ts`, which it hands each workflow script exactly as
 ShellCheck reads it: YAML escapes and folding decoded, and every `${{ }}` expression blanked. The stand-in refuses
@@ -367,6 +370,20 @@ Review refuses what no row checks, since each such file sits in the diff and run
 file beyond `commitlint.config.js` and `worker-configuration.d.ts`, a path below a personal file's name, and a
 tracked `.claude/settings.local.json`.
 
+Review also holds these lines of the workflows, which no row, test or shared job reads, since no repository test
+reads a workflow file:
+
+- CI's gate job starts the gate by its file, `bun --no-env-file scripts/check.ts`, never through `bun run`;
+- the gate job runs `jdx/mise-action` before the checkout, with `install`, `cache`, `env`, `export_path` and
+  `add_shims_to_path` off and an empty `github_token`;
+- `ci.yml` sets `MISE_OVERRIDE_CONFIG_FILENAMES`, `MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES`, `MISE_ENV` and
+  `MISE_AUTO_ENV` for every step;
+- the gate job and the deploy job each install once, with `bun install --frozen-lockfile --ignore-scripts`.
+
+The shared `workflows` job's actionlint and zizmor steps lint these files and audit them, and none of their checks
+holds any of the four. `CODEOWNERS` names the owner for `.github/workflows/`, and the default-branch ruleset
+requires that review.
+
 The `tools` row reads `mise.toml` and `mise.lock` against the expectations in `scripts/tools.ts`, and installs
 from the lockfile only after that read passes. `mise.toml` holds `[tools]`, `[tool_config]` and `[settings]`
 alone, and the last two equal the values in `scripts/tools.ts` exactly, because mise runs a `[hooks]`, `[env]` or
@@ -378,10 +395,10 @@ the temporary directory, the Unix home, a proxy, the Windows folders the system 
 settings. No other variable reaches mise, so a personal mise setting never changes the gate. `mise.lock` pins
 `linux-x64`, `macos-arm64` and `windows-x64`, and a contributor on another platform relocks in a pull request.
 
-In `bun run check`, the `zizmor` row runs zizmor online when `gh auth token` answers within five seconds, because
-its advisory, impostor-commit and version-comment audits read the pinned actions' repositories. gh answers from
-`GH_TOKEN`, `GITHUB_TOKEN` or its own login, and those two names reach gh alone. The answer reaches zizmor's
-process alone. With no answer the row passes `--offline`. The row's line says which mode ran.
+In `bun run check`, the `workflows` row runs zizmor online when `gh auth token` answers within five seconds,
+because its advisory, impostor-commit and version-comment audits read the pinned actions' repositories. gh
+answers from `GH_TOKEN`, `GITHUB_TOKEN` or its own login, and those two names reach gh alone. The answer reaches
+zizmor's process alone. With no answer the row passes `--offline`. The row's line says which mode ran.
 `bun run check:quick` runs zizmor offline, so the push hook needs no network and no token, and
 `ZIZMOR_OFFLINE=true` forces offline for the full gate. CI's gate job names no token, so the row runs offline
 there, and zizmor's online audits run in the `workflows` job below.
@@ -429,7 +446,7 @@ and a copied header often does not. commitlint skips git's `Revert "..."` subjec
 parse it, so that revert never reaches the changelog.
 
 `changelog-sections` in `release-please-config.json` hides a type from the changelog, not from the history. Every
-version heading after 1.0.0 links GitHub's compare view from the previous tag. That view and
+version heading after the first links GitHub's compare view from the previous tag. That view and
 `git log <previous tag>..<tag>` list every change in a release, hidden types included.
 
 The scope is optional. A change that belongs to no single area names none. `.github/commit-scopes.json` lists each
@@ -473,17 +490,22 @@ pull request and nothing moves through lock file maintenance alone. Renovate run
 file maintenance and CI run in containers with no other configuration, so the file is the one cooldown those runs
 observe.
 
+`trustedDependencies` in `package.json` names the one dependency whose install script runs: lefthook, which
+installs the hooks. Naming it replaces Bun's built-in allow list, which also runs esbuild's and workerd's. Each of
+those checks for the platform binary its optional dependency installs from `bun.lock`, and fetches one from the
+registry outside `bun.lock` when it finds none, so neither runs.
+
 Renovate picks its commit type by what a bump does to a user: a runtime dependency lands as `fix` and ships, and a
 development dependency, a wrangler bump and an action bump land as `chore` or `ci` and do not. Unhiding one of
 those types in `release-please-config.json` would put its commits back in the changelog, so each would cut a
 release and deploy.
 
 Two TypeScript compilers are installed on purpose. `bun run typecheck` and the gate's `typecheck` row run the
-native TypeScript 7 compiler from the `@typescript/native` alias. `typescript` itself stays on the major
-typescript-eslint's `typescript` peer range admits, because typescript-eslint needs that compiler's API.
-`.github/renovate.json` holds the major back and says what lifts the hold. Both ship a `tsc`, and `bun install`
-links the name to the package whose name sorts first, the alias. The `typecheck` row checks `tsc --version`
-against the alias's major before it checks anything.
+native TypeScript 7 compiler from the `@typescript/native` alias. `typescript` itself stays inside
+typescript-eslint's `typescript` peer range, because typescript-eslint needs that compiler's API.
+`.github/renovate.json` holds it there and says what lifts the hold. Both ship a `tsc`, and `bun install` links
+the name to the package whose name sorts first, the alias. The `typecheck` row checks `tsc --version` against the
+alias's major before it checks anything.
 
 The advisory legs:
 
@@ -538,7 +560,7 @@ pinned tree, a checksum recorded by a third party, and a version alone.
 ## Releases
 
 [release-please](https://github.com/googleapis/release-please) runs under the `zachthedev-releaser` app on every
-push to `main`. Once a releasable change lands, it opens one pull request titled `chore(main): release x.y.z` and
+push to `main`. Once a releasable change lands, it opens one pull request titled `chore: release x.y.z` and
 keeps it up to date. Merging it tags the merge commit and creates the GitHub Release as a draft, every time. The
 `publish` job flips the draft public under the `release` environment's reviewer, and the deploy runs against that
 revision. [docs/deploy.md](docs/deploy.md#releasing-deploys) says how the deploy follows.
@@ -552,10 +574,7 @@ and a visible one gives a patch, `feat` a minor. `!` or a `BREAKING CHANGE:` foo
 hidden one included. Hiding decides releasability, not presentation. The commit types the changelog hides are that
 file's record. [Commit messages](#commit-messages) says why a change takes one.
 
-The version started at 1.0.0 rather than 0.x, deliberately. The Worker's interface is its URL contract: the query
-parameters a device sends and the JSON it gets back. That contract was settled at v1.0.0 and still holds, so the
-number states stability rather than defaulting to it. Being at 1.x is also what gives `feat!` its meaning: below
-1.0.0, release-please treats a breaking change as a minor bump, so the marker cannot signal a break at all.
+`initial-version` in `release-please-config.json` sets the first release.
 
 Publishing is a human step. release-please creates the tag and a draft release. The `publish` job in `cd.yml` waits
 for the `release` environment's reviewer and then flips the draft public, and the deploy follows the flip. A draft
@@ -565,8 +584,9 @@ that is never approved ships nothing, and a failed release is the next version.
 
 A local run that fails or disagrees with CI:
 
-- A row that says a tool "is not installed in this checkout", or a hook that cannot find its tool, means a missing
-  install. Run `bun install --frozen-lockfile`, or add `--ignore-scripts` in a worktree ([Setup](#setup)).
+- A row or `bun run deploy` that says a tool "is not installed in this checkout", or a hook that cannot find its
+  tool, means a missing install. Run `bun install --frozen-lockfile`, or add `--ignore-scripts` in a worktree
+  ([Setup](#setup)).
 - A stale install runs another version. When `node_modules/.bin` holds a tool at the wrong version, the gate's
   check passes and `bun x` runs that copy. When the checkout holds none, a hook's bunx or a script's `bun x` runs a
   copy from a parent directory, `PATH` or its own cache, and a script can report green over it. The gate refuses
@@ -576,14 +596,14 @@ A local run that fails or disagrees with CI:
   can pass an import CI refuses. After a pull that drops a dependency, delete `node_modules/` and install again.
 - A personal env file reaches every JavaScript tool `bun x` or bunx starts, the hooks, the scripts and the gate's
   rows alike, since both ignore `--no-env-file`. A value there can turn a row red locally alone:
-  `PRETTIER_EXPERIMENTAL_CLI` in the `format:check` row, or `CLOUDFLARE_INCLUDE_PROCESS_ENV` in the
+  `PRETTIER_EXPERIMENTAL_CLI` in the `format` row, or `CLOUDFLARE_INCLUDE_PROCESS_ENV` in the
   `cf-typegen:check` row. Move the file aside and run again ([Safety](#safety)).
 - A gate that differs from CI can come from your environment. `BUN_OPTIONS` reaches the gate's own process before
   its first line, and `BUN_INSPECT`, `BUN_INSPECT_CONNECT_TO` and `BUN_INSPECT_PRELOAD` reach its
   `scripts:test`, `cf-typegen:check` and `test` rows too. Leave all four unset ([Safety](#safety)).
 - A local gate can pass where CI's `commits` or `workflows` job fails, since those jobs refuse files the gate does
   not repeat ([The gate](#the-gate)).
-- A `zizmor` row that differs from CI can come from zizmor's online audits. They run on your machine when gh
+- A `workflows` row that differs from CI can come from zizmor's online audits. They run on your machine when gh
   answers with a token and never in CI's gate job. `ZIZMOR_OFFLINE=1` runs what CI runs.
 - Behind an HTTP proxy, Bun sends a request to localhost through `HTTP_PROXY` unless `NO_PROXY` names it, where
   Node's clients do not. wrangler's type generation and vitest's workers pool then cannot reach the workerd they
@@ -614,6 +634,13 @@ A local run that fails or disagrees with CI:
   arrives from the deploying machine for the same reason.
 - A test never reaches the Cloudflare API, a DNS record or an ntfy server ([Tests](#tests)).
 - Nobody hand-edits a file release-please owns ([Releases](#releases)).
+- No `mise.lock` line is written outside `mise lock`, except a checksum computed as `mise.toml` says. The lockfile
+  is what an install fetches and compares, and the gate holds it to the expectations in `scripts/tools.ts`. A
+  hand-written line is a line nothing verified.
+- Nothing merges past a red gate. The required checks and the code-scanning rule sit in a ruleset with no bypass
+  actor.
+- No version number goes into prose. A version lives in the file that pins it, so a bump is one edit and no
+  document goes stale.
 - A commit never carries a scope outside `.github/commit-scopes.json`, and a tooling change never takes a type that
   cuts a release ([Commit messages](#commit-messages)).
 - No workflow lists a check as a step. CI calls `bun --no-env-file scripts/check.ts`, and a check that cannot run

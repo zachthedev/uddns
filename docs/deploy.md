@@ -18,20 +18,27 @@ names, and creates them where no such worker exists.
 1. Click the button and complete the deployment. The KV namespace and the D1 audit database are created
    on this first deploy.
 2. Note the `*.workers.dev` route.
-3. Apply the D1 migrations afterwards: `bun x wrangler d1 migrations apply AUDIT_DB --remote`. The button
-   flow creates the database but runs no migration, so `/history` and audit logging stay dark until you
-   do. The other two paths run the migrations themselves.
+3. Apply the D1 migrations afterwards. The button flow creates the database but runs no migration, so
+   `/history` and audit logging stay dark until you do. The other two paths run the migrations
+   themselves. This step needs [Bun](https://bun.sh) and a clone of this repository with its install, so
+   the wrangler it starts is the one `bun.lock` pins. `--no-install` keeps bunx from fetching one from
+   the registry:
+   ```sh
+   bun install --frozen-lockfile
+   bun x --no-install wrangler d1 migrations apply AUDIT_DB --remote
+   ```
 
 ### With the CLI
 
 Requires [Bun](https://bun.sh).
 
-1. Clone this repository and run `bun install`.
+1. Clone this repository and run `bun install`. Every wrangler command below runs the wrangler that
+   install puts in the clone, and `--no-install` keeps bunx from fetching one from the registry.
 2. Log in and create the D1 audit database once. The deploy applies its migrations before uploading, and
    the migration step resolves the database by name without creating it:
    ```sh
-   bun x wrangler login
-   bun x wrangler d1 create d1-uddns-audit-prod
+   bun x --no-install wrangler login
+   bun x --no-install wrangler d1 create d1-uddns-audit-prod
    ```
 3. Deploy. The KV namespace is created on this first deploy, and every later deploy reuses both resources
    by their binding names:
@@ -102,7 +109,7 @@ the schema in production corresponds to a revision you can check out, instead of
 landed last.
 
 [release-please](https://github.com/googleapis/release-please) drives it. Once a releasable change lands
-on `main`, it opens one pull request titled `chore(main): release x.y.z` and keeps it up to date, carrying
+on `main`, it opens one pull request titled `chore: release x.y.z` and keeps it up to date, carrying
 the version bump and the changelog entries for everything landed since the last release. Nothing ships
 while it sits there. Merging it is the release: the merge commit is tagged and a draft release is
 created, the `publish` job waits for the `release` environment's reviewer and flips the draft public,

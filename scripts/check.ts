@@ -4,9 +4,10 @@
  * @remarks
  * `bun run check` runs the rows in order and stops at the first failure.
  * `bun run check:quick` runs the same rows without the test row, the form the
- * push hook runs. `bun run check:rows` prints the rows and runs nothing, which
- * is the list CONTRIBUTING.md points at. CI's gate job runs this file on three
- * platforms, so a green run here is a green run there.
+ * push hook runs. `bun run check <row>` runs the named rows alone.
+ * `bun run check:rows` prints the rows and runs nothing, which is the list
+ * CONTRIBUTING.md points at. CI's gate job runs this file on three platforms,
+ * so a green run here is a green run there.
  *
  * No row resolves a tool from the machine's PATH. The programs the gate
  * expects there, git, mise and gh, are the prerequisites CONTRIBUTING.md#setup
@@ -19,13 +20,13 @@
  * the named paths, a node_modules below the root, a JSON key Bun and the
  * shared commits job read two ways, a patch a package.json names, anything
  * that would steer how Bun resolves the gate's own imports, a workflow the
- * actionlint and zizmor rows would not read, or an inline zizmor waiver under
- * .github. No config's text is held: code-owner review is the control on a
- * change to one. The other files that run code before the gate's first line,
- * such as a bunfig.toml preload, are refused before a merge by the shared
- * commits and workflows jobs. A pull request cannot edit those jobs at the pin
- * ci.yml calls, and code-owner review of .github/workflows/ is the control on
- * a change to that pin or to the job that runs this file. Every row that walks
+ * workflows row would not read, or an inline zizmor waiver under .github. No
+ * config's text is held: code-owner review is the control on a change to one.
+ * The other files that run code before the gate's first line, such as a
+ * bunfig.toml preload, are refused before a merge by the shared commits and
+ * workflows jobs. A pull request cannot edit those jobs at the pin ci.yml
+ * calls, and code-owner review of .github/workflows/ is the control on a
+ * change to that pin or to the job that runs this file. Every row that walks
  * the tree says how many files it checked and fails when that is none. The
  * rows that run the repository's own code come last, and the preflight runs
  * again after each. No row carries a deadline: the CI job's timeout-minutes
@@ -45,7 +46,7 @@ import { styleText } from 'node:util';
 import type * as Prettier from 'prettier';
 // Every module imported here reads Bun and node: built-ins alone, so the
 // preflight runs and prints on a checkout with no install. tools.ts imports
-// zod and the format:check row imports prettier, each by its path under the
+// zod and the format row imports prettier, each by its path under the
 // checkout's node_modules, so a missing install fails the row that needs it.
 // github.ts takes every GitHub token out of the environment when it loads,
 // before any row starts a process.
@@ -89,9 +90,9 @@ const NO_ENV_FILE = '--no-env-file';
 
 /**
  * Prettier's module entry under the checkout's node_modules, by path, so a
- * missing install fails the format:check row rather than loading a copy from
- * a parent directory or installing one at run time. The specifier is held in
- * a variable, so tsc takes the types from the `import type` above and never
+ * missing install fails the format row rather than loading a copy from a
+ * parent directory or installing one at run time. The specifier is held in a
+ * variable, so tsc takes the types from the `import type` above and never
  * resolves the untyped file.
  */
 const PRETTIER_ENTRY = '../node_modules/prettier/index.mjs';
@@ -125,11 +126,25 @@ export interface Row {
 /** The binary paths the `tools` row resolves, read by the rows after it. */
 const binaries = new Map<string, string>();
 
-/** The path the `tools` row resolved for `key`. */
-function binary(key: string): string {
+/**
+ * The path the `tools` row resolved for `key`.
+ *
+ * @remarks
+ * A single row run with `bun run check <row>` skips the `tools` row, so the
+ * map is filled from `mise which` on first use. That asserts mise.toml and
+ * mise.lock first, resolves installed binaries and checks their versions; it
+ * installs nothing.
+ */
+async function binary(key: string): Promise<string> {
+  if (binaries.size === 0) {
+    const { resolve } = await import('./tools');
+    for (const [tool, path] of await resolve()) {
+      binaries.set(tool, path);
+    }
+  }
   const path = binaries.get(key);
   if (path === undefined) {
-    throw new Error(`the tools row did not resolve ${key}, so this row cannot run`);
+    throw new Error(`TOOLS in scripts/tools.ts names no ${key}, so this row cannot run`);
   }
   return path;
 }
@@ -355,7 +370,7 @@ export async function cfTypegen(): Promise<undefined> {
   }
 }
 
-/* ///// format:check ///// */
+/* ///// format ///// */
 
 // Prettier names no file it checked, so the row hands it every tracked file
 // Prettier would format, decided by Prettier's own getFileInfo against the one
@@ -368,7 +383,7 @@ export async function cfTypegen(): Promise<undefined> {
 // the one config, so Prettier searches for no other file and a config under a
 // subdirectory never loads. --no-editorconfig keeps any .editorconfig from
 // setting an option.
-async function formatCheck(): Promise<string> {
+async function format(): Promise<string> {
   const { getFileInfo } = (await import(PRETTIER_ENTRY)) as typeof Prettier;
   const checked: string[] = [];
   for (const path of await trackedFiles()) {
@@ -405,21 +420,21 @@ async function formatCheck(): Promise<string> {
   return files(checked.length);
 }
 
-/* ///// taplo ///// */
+/* ///// toml ///// */
 
 // taplo exits 0 having checked nothing when a file it was handed is missing
 // or excluded, so the row matches the files taplo says it found against the
 // files it handed over. The config is named, so TAPLO_CONFIG in the
 // environment cannot swap it. RUST_LOG is set, because taplo prints its found
 // line at that level and a contributor's own setting would hide it.
-async function taplo(): Promise<string> {
-  const program = binary('taplo');
+async function toml(): Promise<string> {
+  const taplo = await binary('taplo');
   const handed = (await trackedFiles()).filter((path) => fold(path).endsWith('.toml'));
   if (handed.length === 0) {
     throw new Error('no TOML file is tracked, so the row checks nothing');
   }
   for (const batch of batches(handed)) {
-    const finished = await expectClean('taplo', [program, 'fmt', '--check', '--config', TAPLO_CONFIG, '--', ...batch], {
+    const finished = await expectClean('taplo', [taplo, 'fmt', '--check', '--config', TAPLO_CONFIG, '--', ...batch], {
       RUST_LOG: 'info',
     });
     const found = taploFound(`${finished.stdout}\n${finished.stderr}`);
@@ -538,7 +553,7 @@ async function lint(): Promise<string> {
   return files(results.length);
 }
 
-/* ///// actionlint ///// */
+/* ///// workflows ///// */
 
 /** A one-step workflow running `script`, for the canaries. */
 function canaryWorkflow(script: string): string {
@@ -585,18 +600,9 @@ function shellWord(path: string): string {
   return `'${path.replaceAll('\\', '/')}'`;
 }
 
-/** The tracked workflows, which the actionlint and zizmor rows each prove they read. */
-async function workflowFiles(): Promise<string[]> {
-  const found = await trackedFiles(':(glob).github/workflows/*.yml', ':(glob).github/workflows/*.yaml');
-  if (found.length === 0) {
-    throw new Error('no workflow is tracked under .github/workflows, so the row checks nothing');
-  }
-  return found;
-}
-
-async function actionlint(): Promise<string> {
-  const lint = binary('actionlint');
-  const shellcheck = binary('shellcheck');
+async function workflows(quick: boolean): Promise<string> {
+  const actionlint = await binary('actionlint');
+  const shellcheck = await binary('shellcheck');
   // actionlint runs ShellCheck through scripts/shellcheck.ts, which refuses a
   // directive in the script ShellCheck reads. -pyflakes= because no Windows
   // package manager ships pyflakes, and actionlint skips that pass without a
@@ -611,7 +617,7 @@ async function actionlint(): Promise<string> {
     for (const canary of CANARIES) {
       const path = join(dir, canary.name);
       await Bun.write(path, canary.workflow);
-      const finished = await run([lint, ...analyzers, path]);
+      const finished = await run([actionlint, ...analyzers, path]);
       if (finished.exitCode !== 1) {
         throw new Error(
           `actionlint over the ${canary.name} canary ${describe(finished)}, and a canary's one finding exits 1`,
@@ -630,9 +636,12 @@ async function actionlint(): Promise<string> {
   // The workflows are named, so actionlint needs no .git to find them, and
   // -verbose makes it name each file it finished. A committed actionlint
   // config is refused before any row, so none silences a finding here.
-  const workflows = await workflowFiles();
-  for (const batch of batches(workflows)) {
-    const finished = await run([lint, '-verbose', ...analyzers, '--', ...batch]);
+  const workflowFiles = await trackedFiles(':(glob).github/workflows/*.yml', ':(glob).github/workflows/*.yaml');
+  if (workflowFiles.length === 0) {
+    throw new Error('no workflow is tracked under .github/workflows, so the row checks nothing');
+  }
+  for (const batch of batches(workflowFiles)) {
+    const finished = await run([actionlint, '-verbose', ...analyzers, '--', ...batch]);
     const report = { ...finished, stderr: finished.stderr.replace(/^verbose:.*\r?\n?/gm, '') };
     if (finished.exitCode !== 0) {
       throw new Error(`actionlint ${describe(report)}`);
@@ -645,12 +654,7 @@ async function actionlint(): Promise<string> {
       );
     }
   }
-  return files(workflows.length);
-}
 
-/* ///// zizmor ///// */
-
-async function zizmor(quick: boolean): Promise<string> {
   // --strict-collection fails on a file zizmor cannot parse. Without it the
   // file is dropped with a warning and the run reports no findings for a
   // workflow it never read. The config is named so ZIZMOR_CONFIG in the
@@ -666,7 +670,6 @@ async function zizmor(quick: boolean): Promise<string> {
   // never reaches node_modules or .claude/worktrees. zizmor prints
   // `completed <file>` for each input at RUST_LOG's info level, so the row
   // proves every tracked workflow was audited.
-  const workflows = await workflowFiles();
   const token = quick || process.env['ZIZMOR_OFFLINE'] !== undefined ? undefined : await githubToken('gh');
   const online = token !== undefined;
   const mode = online ? [] : ['--offline'];
@@ -674,7 +677,7 @@ async function zizmor(quick: boolean): Promise<string> {
   const audited = await expectClean(
     `zizmor (${online ? 'online' : 'offline'})`,
     [
-      binary('zizmor'),
+      await binary('zizmor'),
       '--no-progress',
       '--strict-collection',
       '--config',
@@ -686,14 +689,14 @@ async function zizmor(quick: boolean): Promise<string> {
     env,
   );
   const completed = zizmorCompleted(audited.stderr);
-  const unaudited = workflows.filter((path) => !completed.has(path));
+  const unaudited = workflowFiles.filter((path) => !completed.has(path));
   if (completed.size === 0 || unaudited.length > 0) {
     throw new Error(
       `zizmor completed ${files(completed.size)}, and these tracked workflows were not among them: ${unaudited.map((path) => quote(path)).join(', ') || 'none'}`,
     );
   }
-  const held = await inheritedCallsHeld(binary('zizmor'));
-  return `${online ? 'online' : 'offline'} over ${files(completed.size)}, ${String(held)} secrets-inherit ${held === 1 ? 'call' : 'calls'} held`;
+  const held = await inheritedCallsHeld(await binary('zizmor'));
+  return `${files(workflowFiles.length)}, zizmor ${online ? 'online' : 'offline'} over ${files(completed.size)}, ${String(held)} secrets-inherit ${held === 1 ? 'call' : 'calls'} held`;
 }
 
 /** What a job that passes `secrets: inherit` may call: a reusable workflow of zachthedev/.github. */
@@ -858,27 +861,21 @@ export const rows: readonly Row[] = [
     check: typecheck,
   },
   {
-    name: 'format:check',
+    name: 'format',
     checks:
       'prettier --check over every tracked file Prettier formats, with .prettierrc and .prettierignore alone and no .editorconfig, and no Prettier ignore comment in any of them',
-    check: formatCheck,
+    check: format,
   },
   {
-    name: 'taplo',
+    name: 'toml',
     checks: 'taplo fmt --check over every tracked TOML file, each one proven checked',
-    check: taplo,
+    check: toml,
   },
   {
-    name: 'actionlint',
+    name: 'workflows',
     checks:
-      'actionlint over every tracked workflow with ShellCheck behind a stand-in that refuses its directives, both proven by a canary, each workflow proven linted',
-    check: actionlint,
-  },
-  {
-    name: 'zizmor',
-    checks:
-      'zizmor over .github with nothing ignored and each tracked workflow proven audited, online in check when gh has a token and offline otherwise, then every job passing secrets: inherit held to a reusable workflow of zachthedev/.github',
-    check: zizmor,
+      'actionlint over every tracked workflow with ShellCheck behind a stand-in that refuses its directives, both proven by a canary, each workflow proven linted, then zizmor over .github with nothing ignored and each workflow proven audited, online in check when gh has a token and offline otherwise, then every job passing secrets: inherit held to a reusable workflow of zachthedev/.github',
+    check: workflows,
   },
   {
     name: 'cf-typegen:check',
@@ -923,8 +920,79 @@ function resultLine(ok: boolean, row: Row, started: number, note?: string): stri
   return `  ${glyph(ok)} ${row.name.padEnd(width)}  ${dim(seconds(started))}${note === undefined ? '' : `  ${dim(printable(note))}`}`;
 }
 
-async function main(): Promise<number> {
-  if (process.argv.includes('--rows')) {
+/** The flags the gate takes. Any other argument that starts with `--` is refused. */
+const FLAGS: readonly string[] = ['--quick', '--rows'];
+
+/** What a run's arguments ask for. */
+export interface Selection {
+  /** The rows to run, in the table's order. */
+  readonly rows: readonly Row[];
+  /** `--quick`: an unnamed run leaves the slow rows out, and the workflows row runs zizmor offline. */
+  readonly quick: boolean;
+  /** Whether the arguments named rows, rather than asking for the gate or its quick form. */
+  readonly named: boolean;
+  /** `--rows`: print the rows and run nothing. */
+  readonly list: boolean;
+}
+
+/**
+ * What a run's arguments ask for, or the refusal it prints when an argument
+ * is neither a row's name nor a flag the gate takes.
+ *
+ * @remarks
+ * Every argument is read here and nowhere else. Named rows run in the table's
+ * order, slow or not. With no name, `--quick` leaves the slow rows out. One
+ * unknown name or flag refuses the whole run, so a mistyped name never selects
+ * nothing and reads as a green gate, and a mistyped flag never runs the whole
+ * gate in place of what it asked for.
+ *
+ * @param args - The arguments after the script's path
+ */
+export function selectRows(args: readonly string[]): Selection | { readonly refusal: string } {
+  const flags = args.filter((argument) => argument.startsWith('--'));
+  const names = args.filter((argument) => !argument.startsWith('--'));
+  const unknownFlags = flags.filter((flag) => !FLAGS.includes(flag));
+  const unknownNames = names.filter((name) => !rows.some((row) => row.name === name));
+  const refusals = [
+    ...(unknownFlags.length > 0
+      ? [
+          `no such flag: ${printable(unknownFlags.map((flag) => quote(flag)).join(', '))}. The gate takes ${FLAGS.join(' and ')}.`,
+        ]
+      : []),
+    ...(unknownNames.length > 0
+      ? [
+          `no such row: ${printable(unknownNames.map((name) => quote(name)).join(', '))}. bun run check:rows lists them.`,
+        ]
+      : []),
+  ];
+  if (refusals.length > 0) {
+    return { refusal: refusals.join(' ') };
+  }
+  const quick = flags.includes('--quick');
+  return {
+    rows: rows.filter((row) => (names.length > 0 ? names.includes(row.name) : !quick || row.slow !== true)),
+    quick,
+    named: names.length > 0,
+    list: flags.includes('--rows'),
+  };
+}
+
+/**
+ * Runs the gate over `args` and returns the process's exit code.
+ *
+ * @remarks
+ * A named run says so in its first and last lines, so its output never reads
+ * as a whole gate that passed.
+ *
+ * @param args - The arguments after the script's path
+ */
+export async function main(args: readonly string[]): Promise<number> {
+  const selection = selectRows(args);
+  if ('refusal' in selection) {
+    console.error(selection.refusal);
+    return 1;
+  }
+  if (selection.list) {
     console.log(dim('rows'));
     console.log();
     for (const row of rows) {
@@ -933,16 +1001,18 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const quick = process.argv.includes('--quick');
-  const selected = rows.filter((row) => !quick || row.slow !== true);
-  console.log(dim(quick ? 'check:quick' : 'check'));
+  const { quick, named } = selection;
+  const selected = selection.rows;
+  const form = quick ? 'check:quick' : 'check';
+  console.log(dim(named ? `${form}: ${selected.map((row) => row.name).join(', ')}` : form));
   console.log();
 
   // The preflight refuses a config a row's tool would read in place of the one
   // the row names, so no row runs beside one. It comes before any other
-  // process the gate starts but git. A row that runs the repository's code can
-  // write any file the preflight reads, so the preflight runs again after one,
-  // before any later row.
+  // process the gate starts but git, and a single row run passes through it
+  // too. A row that runs the repository's code can write any file the
+  // preflight reads, so the preflight runs again after one, before any later
+  // row.
   const preflight = async (after: string): Promise<boolean> => {
     const refused = [...(await trackedFindings()), ...(await startupFindings())];
     if (refused.length > 0) {
@@ -976,12 +1046,16 @@ async function main(): Promise<number> {
     }
   }
   console.log(`  ${dim('─'.repeat(width + 12))}`);
-  console.log(`  ${String(selected.length)} checks passed`);
+  console.log(
+    named
+      ? `  ${String(selected.length)} of ${String(rows.length)} rows ran and passed`
+      : `  ${String(selected.length)} checks passed`,
+  );
   return 0;
 }
 
 // Run as a file, the gate runs. Imported, as scripts/check.test.ts does, it
 // runs nothing and hands over its rows.
 if (import.meta.main) {
-  process.exitCode = await main();
+  process.exitCode = await main(process.argv.slice(2));
 }

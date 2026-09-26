@@ -1,4 +1,5 @@
 import { $ } from 'bun';
+import { jsTool } from './run';
 
 /**
  * Single deploy path for local machines and CI.
@@ -31,15 +32,31 @@ if (hasCustomDomain && !HOSTNAME.test(customDomain)) {
   process.exit(1);
 }
 
+// Every wrangler start takes --no-install, so bunx never fetches whatever
+// wrangler the registry serves and runs it with the account's credentials.
+// Without the checkout's install, bunx still runs a copy from a parent
+// directory, PATH or its own cache, none of them the version bun.lock pins, so
+// the deploy refuses first unless node_modules/.bin holds wrangler as a
+// regular file. jsTool is the gate's check and message. Its command carries
+// --bun, which these starts do not take, so only the check is used. Deviates
+// from the handbook: no start takes --bun, so wrangler runs under the first
+// node on PATH, as the dev and start scripts run it. wrangler deploy under Bun
+// is unmeasured, and only a deploy measures it.
+try {
+  jsTool('wrangler');
+} catch (error: unknown) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 console.log('Applying D1 migrations…');
-await $`bun x wrangler d1 migrations apply AUDIT_DB --remote`;
+await $`bun x --no-install wrangler d1 migrations apply AUDIT_DB --remote`;
 
 if (hasCustomDomain) {
   console.log(`Deploying with custom domain ${customDomain}…`);
-  await $`bun x wrangler deploy --domain ${customDomain}`;
+  await $`bun x --no-install wrangler deploy --domain ${customDomain}`;
 } else {
   console.log('Deploying to the workers.dev URL…');
-  await $`bun x wrangler deploy`;
+  await $`bun x --no-install wrangler deploy`;
 }
 
 // The value reaches wrangler on stdin, never as an argument, so it stays out
@@ -47,7 +64,7 @@ if (hasCustomDomain) {
 const accessKey = process.env['ACCESS_KEY'];
 if (accessKey !== undefined && accessKey !== '') {
   console.log('Syncing ACCESS_KEY worker secret…');
-  await $`bun x wrangler secret put ACCESS_KEY < ${new Response(accessKey)}`;
+  await $`bun x --no-install wrangler secret put ACCESS_KEY < ${new Response(accessKey)}`;
 } else {
   console.log('ACCESS_KEY not in environment; skipping secret sync.');
 }
