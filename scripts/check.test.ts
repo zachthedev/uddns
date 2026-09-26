@@ -4,7 +4,7 @@
 // check.ts loads, so no case starts a program: nothing reaches gh, git, mise,
 // wrangler, workerd or the network.
 
-import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -55,6 +55,7 @@ const REAL_TOOLS = { ...toolsModule };
 
 let standIns: StandIns;
 let installs = 0;
+let resolves = 0;
 
 /** True while a case wants the tools row to resolve ShellCheck under a directory named with a single quote. */
 let quotedShellcheck = false;
@@ -71,8 +72,10 @@ await mock.module('./tools', () => ({
     installs += 1;
     return Promise.resolve();
   },
-  resolve: (): Promise<ReadonlyMap<string, string>> =>
-    Promise.resolve(new Map(REAL_TOOLS.TOOLS.map((tool) => [tool.key, binaryPath(tool.key)]))),
+  resolve: (): Promise<ReadonlyMap<string, string>> => {
+    resolves += 1;
+    return Promise.resolve(new Map(REAL_TOOLS.TOOLS.map((tool) => [tool.key, binaryPath(tool.key)])));
+  },
 }));
 
 // The root check.ts loads from, whose scripts/ holds the ShellCheck stand-in.
@@ -135,7 +138,7 @@ async function outcome(work: () => unknown): Promise<string> {
 /** The tracked files the fixture tree holds, each written to the working directory by {@link plantTree}. */
 const TRACKED: readonly string[] = ['README.md', 'src/a.ts', 'config.toml', '.github/workflows/ci.yml'];
 
-/** The tracked workflows, which the actionlint and zizmor rows read. */
+/** The tracked workflows, which the workflows row reads. */
 const WORKFLOWS: readonly string[] = ['.github/workflows/ci.yml'];
 
 /**
@@ -168,7 +171,7 @@ function plantInstall(): void {
     writeFileSync(join('node_modules', '.bin', name), '');
     writeFileSync(join('node_modules', '.bin', `${name}.exe`), '');
   }
-  writeFileSync('package.json', JSON.stringify({ devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' } }));
+  writeFileSync('package.json', JSON.stringify({ devDependencies: { '@typescript/native': 'npm:typescript@7.9.4' } }));
 }
 
 /** How every JavaScript tool a row runs starts: the gate Bun running bunx. */
@@ -214,7 +217,7 @@ function passing(cmd: readonly string[]): Answer {
   switch (tool(cmd)) {
     case 'tsc':
       return cmd.includes('--version')
-        ? { stdout: 'Version 7.0.2\n' }
+        ? { stdout: 'Version 7.9.4\n' }
         : { stdout: `${resolve('src/a.ts').replaceAll('\\', '/')}\n` };
     case 'eslint':
       return { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [] }]) };
@@ -332,7 +335,7 @@ async function runEveryRow(): Promise<void> {
 const PACKAGE_ROWS: readonly (readonly [string, string])[] = [
   ['typecheck', 'tsc'],
   ['cf-typegen:check', 'wrangler'],
-  ['format:check', 'prettier'],
+  ['format', 'prettier'],
   ['lint', 'eslint'],
   ['test', 'vitest'],
 ];
@@ -496,10 +499,10 @@ test('lint passes a report of another rule a directive suppressed', async () => 
   expect(await outcome(() => row('lint').check(false))).toBe('passed');
 });
 
-test('format:check names .prettierrc and .prettierignore, reads no .editorconfig, and hands over the files Prettier formats', async () => {
+test('format names .prettierrc and .prettierignore, reads no .editorconfig, and hands over the files Prettier formats', async () => {
   plantTree();
 
-  await row('format:check').check(false);
+  await row('format').check(false);
 
   const [call] = callsToTool('prettier');
   const cmd = call?.cmd ?? [];
@@ -509,20 +512,20 @@ test('format:check names .prettierrc and .prettierignore, reads no .editorconfig
   expect([...handed(cmd)].sort()).toEqual(['.github/workflows/ci.yml', 'README.md', 'src/a.ts']);
 });
 
-test('taplo names .taplo.toml, hands over the tracked TOML files, and asks for its found line', async () => {
+test('toml names .taplo.toml, hands over the tracked TOML files, and asks for its found line', async () => {
   plantTree();
 
-  await row('taplo').check(false);
+  await row('toml').check(false);
 
   const [call] = callsTo(binaryPath('taplo'));
   expect(call?.cmd).toEqual([binaryPath('taplo'), 'fmt', '--check', '--config', '.taplo.toml', '--', 'config.toml']);
   expect(call?.env['RUST_LOG']).toBe('info');
 });
 
-test('zizmor in the quick form runs offline over .github with its config named, and asks gh nothing', async () => {
+test('workflows in the quick form runs zizmor offline over .github with its config named, and asks gh nothing', async () => {
   plantTree();
 
-  await row('zizmor').check(true);
+  await row('workflows').check(true);
 
   const [call] = callsTo(binaryPath('zizmor'));
   const cmd = call?.cmd ?? [];
@@ -534,21 +537,21 @@ test('zizmor in the quick form runs offline over .github with its config named, 
   expect(callsTo('gh')).toEqual([]);
 });
 
-test('zizmor in the full form runs offline when gh answers with no token', async () => {
+test('workflows in the full form runs zizmor offline when gh answers with no token', async () => {
   plantTree();
 
-  await row('zizmor').check(false);
+  await row('workflows').check(false);
 
   expect(callsTo('gh').map((call) => call.cmd)).toEqual([['gh', 'auth', 'token']]);
   expect(callsTo(binaryPath('zizmor'))[0]?.cmd).toContain('--offline');
 });
 
-test('zizmor in the full form runs online with the token gh answers, handed to zizmor alone', async () => {
+test('workflows in the full form runs zizmor online with the token gh answers, handed to zizmor alone', async () => {
   plantTree();
   const base = passing;
   answer = (cmd: readonly string[]): Answer => (cmd[0] === 'gh' ? { stdout: 'canary-token\n' } : base(cmd));
 
-  await row('zizmor').check(false);
+  await row('workflows').check(false);
 
   const [call] = callsTo(binaryPath('zizmor'));
   expect(call?.cmd).not.toContain('--offline');
@@ -583,10 +586,9 @@ test('the test row runs vitest run --coverage', async () => {
 });
 
 test.each([
-  ['format:check', 'no tracked file is one Prettier formats, so the row checks nothing'],
-  ['taplo', 'no TOML file is tracked, so the row checks nothing'],
-  ['actionlint', 'no workflow is tracked under .github/workflows, so the row checks nothing'],
-  ['zizmor', 'no workflow is tracked under .github/workflows, so the row checks nothing'],
+  ['format', 'no tracked file is one Prettier formats, so the row checks nothing'],
+  ['toml', 'no TOML file is tracked, so the row checks nothing'],
+  ['workflows', 'no workflow is tracked under .github/workflows, so the row checks nothing'],
 ])('%s fails when git lists no file for it', async (name: string, message: string) => {
   answer = (cmd: readonly string[]): Answer => (cmd[0] === 'git' ? { stdout: '' } : passing(cmd));
 
@@ -679,6 +681,193 @@ test('cf-typegen:check checks for wrangler before it deletes the types file', as
 test('the tools row installs through the tools module, once per run', () => {
   // beforeAll ran the row once.
   expect(installs).toBe(1);
+});
+
+/* ///// Which rows a run selects ///// */
+
+/** Every row's name, in the table's order. */
+const ALL_ROWS: readonly string[] = check.rows.map((each) => each.name);
+
+/** What a run's arguments select, with each row by its name. */
+interface Selected {
+  readonly rows: readonly string[];
+  readonly quick: boolean;
+  readonly named: boolean;
+  readonly list: boolean;
+}
+
+interface SelectCase {
+  readonly label: string;
+  /** The arguments after the script's path. */
+  readonly args: readonly string[];
+  /** The selection, or the whole refusal. */
+  readonly expected: Selected | { readonly refusal: string };
+}
+
+// Named rows run in the table's order, slow or not, and one unknown name or
+// flag refuses the whole run, so a mistyped name never selects nothing and
+// reads as a green gate, and a mistyped flag never runs the whole gate in its
+// place. The four refused old names are the rows' names before the
+// kickstart's.
+const SELECT_CASES: readonly SelectCase[] = [
+  {
+    label: 'no argument selects every row, in the table order',
+    args: [],
+    expected: { rows: ALL_ROWS, quick: false, named: false, list: false },
+  },
+  {
+    label: '--quick leaves the test row out',
+    args: ['--quick'],
+    expected: { rows: ALL_ROWS.filter((name) => name !== 'test'), quick: true, named: false, list: false },
+  },
+  {
+    label: 'one name selects that row alone',
+    args: ['workflows'],
+    expected: { rows: ['workflows'], quick: false, named: true, list: false },
+  },
+  {
+    label: 'two names run in the table order, not the argument order',
+    args: ['lint', 'format'],
+    expected: { rows: ['format', 'lint'], quick: false, named: true, list: false },
+  },
+  {
+    label: 'a named slow row runs under --quick',
+    args: ['--quick', 'test'],
+    expected: { rows: ['test'], quick: true, named: true, list: false },
+  },
+  {
+    label: '--rows asks for the list',
+    args: ['--rows'],
+    expected: { rows: ALL_ROWS, quick: false, named: false, list: true },
+  },
+  {
+    label: 'a misspelled --quick is refused',
+    args: ['--quik'],
+    expected: { refusal: 'no such flag: "--quik". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'a misspelled --rows is refused',
+    args: ['--row'],
+    expected: { refusal: 'no such flag: "--row". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'a row name written as a flag is refused',
+    args: ['--typecheck'],
+    expected: { refusal: 'no such flag: "--typecheck". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'an unknown flag and an unknown name are refused together',
+    args: ['--quik', 'nosuchrow'],
+    expected: {
+      refusal:
+        'no such flag: "--quik". The gate takes --quick and --rows. no such row: "nosuchrow". bun run check:rows lists them.',
+    },
+  },
+  {
+    label: 'a name holding a C1 control sequence is refused with it escaped',
+    args: ['\u009b31m'],
+    expected: { refusal: 'no such row: "\\u009b31m". bun run check:rows lists them.' },
+  },
+  {
+    label: 'an unknown name is refused',
+    args: ['nosuchrow'],
+    expected: { refusal: 'no such row: "nosuchrow". bun run check:rows lists them.' },
+  },
+  {
+    label: 'one unknown name among known ones refuses the run, naming it alone',
+    args: ['workflows', 'zizmor'],
+    expected: { refusal: 'no such row: "zizmor". bun run check:rows lists them.' },
+  },
+  {
+    label: 'the old name actionlint is refused',
+    args: ['actionlint'],
+    expected: { refusal: 'no such row: "actionlint". bun run check:rows lists them.' },
+  },
+  {
+    label: 'the old name zizmor is refused',
+    args: ['zizmor'],
+    expected: { refusal: 'no such row: "zizmor". bun run check:rows lists them.' },
+  },
+  {
+    label: 'the old name taplo is refused',
+    args: ['taplo'],
+    expected: { refusal: 'no such row: "taplo". bun run check:rows lists them.' },
+  },
+  {
+    label: 'the old name format:check is refused',
+    args: ['format:check'],
+    expected: { refusal: 'no such row: "format:check". bun run check:rows lists them.' },
+  },
+  {
+    label: 'a name holding a newline is refused on one line, the newline escaped',
+    args: ['a\nb'],
+    expected: { refusal: 'no such row: "a\\nb". bun run check:rows lists them.' },
+  },
+];
+
+test.each([...SELECT_CASES])('selectRows: $label', ({ args, expected }: SelectCase) => {
+  const selection = check.selectRows(args);
+  const selected: SelectCase['expected'] =
+    'refusal' in selection
+      ? { refusal: selection.refusal }
+      : {
+          rows: selection.rows.map((each) => each.name),
+          quick: selection.quick,
+          named: selection.named,
+          list: selection.list,
+        };
+
+  expect(selected).toEqual(expected);
+});
+
+// The refusal keeps a mistyped row from reading as a green gate only while the
+// process exits 1. It comes before the preflight, so the run starts nothing.
+test('main refuses an unknown row with exit 1, the refusal alone on stderr, and nothing on stdout', async () => {
+  const errors = spyOn(console, 'error').mockImplementation(() => undefined);
+  const logs = spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    const code = await check.main(['nosuchrow']);
+
+    expect(code).toBe(1);
+    expect(errors.mock.calls).toEqual([['no such row: "nosuchrow". bun run check:rows lists them.']]);
+    expect(logs.mock.calls).toEqual([]);
+    expect(calls).toEqual([]);
+  } finally {
+    errors.mockRestore();
+    logs.mockRestore();
+  }
+});
+
+/* ///// A single row's binaries ///// */
+
+// A second copy of check.ts under its own specifier, so its binaries map
+// starts empty, as in a `bun run check <row>` process that skips the tools
+// row. The specifier is held in a variable, so tsc resolves no module from the
+// query string.
+const SINGLE_ROW_CHECK = './check.ts?single-row';
+
+test('a single row run fills the binaries through tools.resolve once, and installs nothing', async () => {
+  const single = (await import(SINGLE_ROW_CHECK)) as typeof check;
+  const singleRow = (name: string): Row => {
+    const found = single.rows.find((candidate) => candidate.name === name);
+    if (found === undefined) {
+      throw new Error(`fixture: the second check.ts has no row ${name}`);
+    }
+    return found;
+  };
+  // The case proves nothing unless the copy is its own module and still starts
+  // every program through the recorder.
+  expect(single.rows).not.toBe(check.rows);
+  await singleRow('scripts:test').check(false);
+  expect(calls.map((call) => call.cmd)).toEqual([[process.execPath, '--no-env-file', 'test', './scripts/']]);
+  plantTree();
+  calls = [];
+  const before = { installs, resolves };
+
+  expect(await outcome(() => singleRow('workflows').check(true))).toBe('passed');
+  expect(resolves - before.resolves).toBe(1);
+  expect(installs - before.installs).toBe(0);
+  expect(callsTo(binaryPath('actionlint')).length).toBeGreaterThan(0);
 });
 
 /* ///// What the rows read from their tools ///// */
@@ -861,7 +1050,7 @@ const COLOR_CASES: readonly ColorCase[] = [
         : passing(cmd),
   },
   {
-    name: 'taplo',
+    name: 'toml',
     tool: "taplo's found line",
     answer: (cmd: readonly string[]): Answer =>
       cmd[0] === binaryPath('taplo')
@@ -869,7 +1058,7 @@ const COLOR_CASES: readonly ColorCase[] = [
         : passing(cmd),
   },
   {
-    name: 'actionlint',
+    name: 'workflows',
     tool: "actionlint's -verbose line and both canaries' findings",
     answer: (cmd: readonly string[]): Answer => {
       if (cmd[0] !== binaryPath('actionlint')) {
@@ -884,7 +1073,7 @@ const COLOR_CASES: readonly ColorCase[] = [
     },
   },
   {
-    name: 'zizmor',
+    name: 'workflows',
     tool: "zizmor's completed line",
     answer: (cmd: readonly string[]): Answer =>
       cmd[0] === binaryPath('zizmor') && !cmd.includes('--no-config')
@@ -900,16 +1089,16 @@ test.each([...COLOR_CASES])('$name reads $tool written in color', async ({ name,
   expect(await outcome(() => row(name).check(true))).toBe('passed');
 });
 
-/* ///// format:check and Prettier's ignore comment ///// */
+/* ///// format and Prettier's ignore comment ///// */
 
 // Written in two halves, so the format row that checks this file finds no comment here.
 const PRETTIER_IGNORE = ['prettier', 'ignore'].join('-');
 
-test("format:check refuses Prettier's ignore comment before Prettier starts", async () => {
+test("format refuses Prettier's ignore comment before Prettier starts", async () => {
   plantTree();
   writeFileSync('src/a.ts', `const kept = 1;\n// ${PRETTIER_IGNORE}\nconst skipped   =   2;\n`);
 
-  const message = await outcome(() => row('format:check').check(false));
+  const message = await outcome(() => row('format').check(false));
 
   expect(message).toContain('"src/a.ts" line 2');
   expect(message).toContain('Prettier ignore comment');
@@ -949,7 +1138,7 @@ interface CompilerCase {
 const COMPILER_CASES: readonly CompilerCase[] = [
   {
     label: 'the pinned major answers, asked before any project',
-    printed: 'Version 7.0.2\n',
+    printed: 'Version 7.9.4\n',
     expected: 'passed',
     passes: [
       ['--version'],
@@ -963,14 +1152,14 @@ const COMPILER_CASES: readonly CompilerCase[] = [
   },
   {
     label: 'another major answers, and no project is checked',
-    printed: 'Version 6.0.3\n',
+    printed: 'Version 6.8.1\n',
     expected:
-      'tsc --version printed "Version 6.0.3", and package.json pins major 7, so node_modules/.bin/tsc is another package\'s compiler',
+      'tsc --version printed "Version 6.8.1", and package.json pins major 7, so node_modules/.bin/tsc is another package\'s compiler',
     passes: [['--version']],
   },
   {
     label: 'package.json pins no native compiler, and no tsc starts',
-    printed: 'Version 7.0.2\n',
+    printed: 'Version 7.9.4\n',
     manifest: JSON.stringify({ devDependencies: {} }),
     expected: 'package.json names no @typescript/native in devDependencies, and the typecheck row runs that compiler',
     passes: [],
@@ -1006,7 +1195,7 @@ function word(path: string): string {
 test('actionlint hands ShellCheck to the stand-in: the gate Bun, no env file, the stand-in, then ShellCheck', async () => {
   plantTree();
 
-  await row('actionlint').check(false);
+  await row('workflows').check(false);
 
   const flags = callsTo(binaryPath('actionlint')).map((call) => shellcheckFlag(call.cmd));
   expect(flags.length).toBe(3);
@@ -1061,7 +1250,7 @@ test.each([...CANARY_CASES])('actionlint fails on $label', async ({ canary, answ
   answer = (cmd: readonly string[]): Answer =>
     cmd[0] === binaryPath('actionlint') && (cmd.at(-1) ?? '').endsWith(canary) ? given : passing(cmd);
 
-  expect(await outcome(() => row('actionlint').check(false))).toStartWith(expected);
+  expect(await outcome(() => row('workflows').check(false))).toStartWith(expected);
   expect(callsTo(binaryPath('actionlint')).some((call) => call.cmd.includes('-verbose'))).toBe(false);
 });
 
@@ -1072,7 +1261,7 @@ test('actionlint refuses a ShellCheck path holding a single quote before actionl
     await row('tools').check(false);
     calls = [];
 
-    const message = await outcome(() => row('actionlint').check(false));
+    const message = await outcome(() => row('workflows').check(false));
 
     expect(message).toContain('holds a single quote');
     expect(callsTo(binaryPath('actionlint'))).toEqual([]);
@@ -1111,7 +1300,7 @@ function holdAnswers(report: unknown): (cmd: readonly string[]) => Answer {
 test('the hold runs zizmor over .github with no config, no ignores and json output', async () => {
   plantTree();
 
-  await row('zizmor').check(true);
+  await row('workflows').check(true);
 
   const hold = callsTo(binaryPath('zizmor')).find((call) => call.cmd.includes('--no-config'));
   expect(hold?.cmd.slice(1)).toEqual([
@@ -1136,7 +1325,7 @@ test('the hold refuses a job that passes secrets: inherit outside zachthedev/.gi
     inheritedCall('deps.yml', 'zachthedev/.github/.github/workflows/deps.yml@abc'),
   ]);
 
-  const message = await outcome(() => row('zizmor').check(true));
+  const message = await outcome(() => row('workflows').check(true));
 
   expect(message).toContain('".github/workflows/cd.yml" line 10');
   expect(message).toContain('"someone-else/.github/.github/workflows/release-pr.yml@abc"');
@@ -1146,7 +1335,7 @@ test('the hold refuses a waived file that holds no such job', async () => {
   plantTree();
   answer = holdAnswers([inheritedCall('cd.yml', 'zachthedev/.github/.github/workflows/release-pr.yml@abc')]);
 
-  expect(await outcome(() => row('zizmor').check(true))).toContain('the secrets-inherit waiver names "deps.yml"');
+  expect(await outcome(() => row('workflows').check(true))).toContain('the secrets-inherit waiver names "deps.yml"');
 });
 
 test('the hold reads its waivers from the committed zizmor.yml', async () => {
@@ -1156,12 +1345,12 @@ test('the hold reads its waivers from the committed zizmor.yml', async () => {
     'rules:\n  secrets-inherit:\n    ignore:\n      - cd.yml\n      - deps.yml\n      - release.yml\n',
   );
 
-  expect(await outcome(() => row('zizmor').check(true))).toContain('the secrets-inherit waiver names "release.yml"');
+  expect(await outcome(() => row('workflows').check(true))).toContain('the secrets-inherit waiver names "release.yml"');
 });
 
 test('the hold fails on a zizmor.yml that does not parse', async () => {
   plantTree();
   writeFileSync('.github/zizmor.yml', 'rules: [unclosed\n');
 
-  expect(await outcome(() => row('zizmor').check(true))).toContain('.github/zizmor.yml does not parse');
+  expect(await outcome(() => row('workflows').check(true))).toContain('.github/zizmor.yml does not parse');
 });

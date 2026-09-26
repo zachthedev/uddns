@@ -156,7 +156,7 @@ describe('Worker fetch handler', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    // vitest 4: constructor mocks must be `function`/class form, not arrows
+    // vitest takes a constructor mock in `function` or class form, not an arrow
     vi.mocked(Cloudflare).mockImplementation(function () {
       return mockCloudflareClient as unknown as Cloudflare;
     });

@@ -1,6 +1,7 @@
 {
   "name": "uddns",
   "version": "1.0.2",
+  "description": "A Cloudflare Worker that lets UniFi OS devices update Cloudflare DNS records.",
   "private": true,
   "type": "module",
   "packageManager": "bun@1.4.2",
@@ -49,5 +50,8 @@
   },
   "dependencies": {
     "cloudflare": "7.1.0"
-  }
+  },
+  "trustedDependencies": [
+    "lefthook"
+  ]
 }

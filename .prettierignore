@@ -1,7 +1,7 @@
-# The one ignore file every Prettier run names with --ignore-path. The
-# format:check row reads this committed file to decide which files it checks.
-# Each pattern is anchored at the root, so a file of the same name deeper in
-# the tree is formatted.
+# The one ignore file every Prettier run names with --ignore-path. The format
+# row reads this committed file to decide which files it checks. Each pattern
+# is anchored at the root, so a file of the same name deeper in the tree is
+# formatted.
 #
 # Written by release-please on every release. Its bullets are `*` and its
 # version headers carry a blank line prettier would collapse, so formatting it

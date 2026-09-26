@@ -5,4 +5,6 @@
 # it walks: node_modules, and Claude Code's worktrees, each of which holds its
 # own copy of every file here.
 include = ["**/*.toml"]
-exclude = ["node_modules/**", ".claude/worktrees/**"]
+# Deviates from the handbook: .wrangler/ is wrangler's build output, which
+# the Bun kickstart's list does not name.
+exclude = ["node_modules/**", ".claude/worktrees/**", ".wrangler/**"]

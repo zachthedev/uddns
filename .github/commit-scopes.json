@@ -6,7 +6,10 @@
     "covers": "Development-only dependency updates. Historical: Renovate files everything as deps"
   },
   { "scope": "history", "covers": "The history endpoint that reads the audit trail back out" },
-  { "scope": "main", "covers": "release-please's own release commits. Not for hand-written changes" },
+  {
+    "scope": "main",
+    "covers": "release-please's own release commits. Historical: release-please titles its pull requests unscoped"
+  },
   { "scope": "refusals", "covers": "The Durable Object that counts hostnames a token reaches for past its authority" },
   { "scope": "release", "covers": "Release tooling and the release workflow" },
   { "scope": "security", "covers": "Authentication, secret handling and CI hardening" }

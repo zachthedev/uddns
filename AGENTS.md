@@ -18,8 +18,8 @@ Read these before changing anything, in order. They bind an agent as they bind a
 - `bun run check` is the gate. Run it before calling a change done, and never run its steps separately
   as a substitute.
 - `bun run check:quick` is the gate without its test row, the form the push hook runs.
-- `bun run check:rows` prints the rows and runs nothing. A row that is a `package.json` script runs alone
-  as `bun run <name>`.
+- `bun run check:rows` prints the rows and runs nothing.
+- `bun run check <row>` runs the named rows.
 
 [CONTRIBUTING.md#the-gate](CONTRIBUTING.md#the-gate) says what the rows cover and which checks run in CI
 alone.
@@ -40,6 +40,11 @@ Session rules, each with its reason:
   tree. The gate clears `BUN_OPTIONS` for every process it starts, after a preload it names has run in the
   gate itself, and documents the other two rather than refusing them, because the environment that carries
   them also carries `PATH`.
+- Never run `bun add` or `bun install` with `--minimum-release-age` below the value in `bunfig.toml`, and never
+  pass `--ignore-scripts` to work around a blocked install script. A worktree's install and an unread pull request
+  branch's install pass `--ignore-scripts` on purpose ([Setup](CONTRIBUTING.md#setup)). The cooldown is the
+  window in which a malicious release is pulled, and a version installed under a lowered one lands in `bun.lock`
+  for every later install, where no cooldown reads it again.
 
 Tree rules, each held by the gate or review, with the reason in
 [CONTRIBUTING.md#what-never-happens](CONTRIBUTING.md#what-never-happens):
@@ -49,6 +54,10 @@ Tree rules, each held by the gate or review, with the reason in
 - Never let a test reach the Cloudflare API, a DNS record or an ntfy server
   ([why](CONTRIBUTING.md#what-never-happens)).
 - Never hand-edit a file release-please owns ([why](CONTRIBUTING.md#what-never-happens)).
+- Never write a `mise.lock` line outside `mise lock`, except a checksum computed as `mise.toml` says
+  ([why](CONTRIBUTING.md#what-never-happens)).
+- Never merge past a red gate ([why](CONTRIBUTING.md#what-never-happens)).
+- Never put a version number in prose ([why](CONTRIBUTING.md#what-never-happens)).
 - Never use a scope outside `.github/commit-scopes.json` ([why](CONTRIBUTING.md#what-never-happens)).
 - Never give a tooling change a type that cuts a release ([why](CONTRIBUTING.md#what-never-happens)).
 - Never add a check as a workflow step ([why](CONTRIBUTING.md#what-never-happens)).

@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "node",
+      "initial-version": "1.0.0",
       "package-name": "uddns",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false,
@@ -11,7 +12,8 @@
       "force-tag-creation": true,
       "bump-minor-pre-major": true,
       "prerelease": false,
-      "pull-request-header": "Automated release PR",
+      "pull-request-title-pattern": "chore: release ${version}",
+      "pull-request-header": "Release pull request",
       "pull-request-footer": "Managed by [zachthedev-releaser](https://github.com/apps/zachthedev-releaser).",
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
