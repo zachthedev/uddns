@@ -141,10 +141,7 @@ const TRACKED: readonly string[] = ['README.md', 'src/a.ts', 'config.toml', '.gi
 /** The tracked workflows, which the workflows row reads. */
 const WORKFLOWS: readonly string[] = ['.github/workflows/ci.yml'];
 
-/**
- * Writes every {@link TRACKED} file into the working directory, and the zizmor
- * config whose secrets-inherit waiver names each file {@link INHERITED} reports.
- */
+/** Writes every {@link TRACKED} file into the working directory. */
 function plantTree(): void {
   for (const path of TRACKED) {
     // Bun's mkdirSync refuses '.' even with recursive set.
@@ -153,7 +150,6 @@ function plantTree(): void {
     }
     writeFileSync(path, path.endsWith('.md') ? '# Title\n' : 'x\n');
   }
-  writeFileSync('.github/zizmor.yml', 'rules:\n  secrets-inherit:\n    ignore:\n      - cd.yml\n      - deps.yml\n');
 }
 
 /** The JavaScript tools the rows start through bunx. */
@@ -182,19 +178,15 @@ function tool(cmd: readonly string[]): string | undefined {
   return BUNX.every((word, index) => cmd[index] === word) ? cmd[BUNX.length] : undefined;
 }
 
-/** zizmor's report of one job passing secrets: inherit in each file the held zizmor.yml waives. */
-const INHERITED = ['cd.yml', 'deps.yml'].map((name) => ({
-  ident: 'secrets-inherit',
-  locations: [
-    {
-      symbolic: { kind: 'Primary', key: { Local: { verbatim_path: `.github/workflows/${name}` } } },
-      concrete: {
-        feature: `zachthedev/.github/.github/workflows/${name}@c53d09e393028ceddee0d761f2a7963394289a72`,
-        location: { start_point: { row: 9 } },
-      },
-    },
-  ],
-}));
+/**
+ * bun test's summary over one file on stderr: `passed` passing tests beside
+ * the skips the gate declares for scripts:test on this platform, so the row
+ * reads the count it expects.
+ */
+function bunTestSummary(passed: number): string {
+  const skipped = check.SCRIPTS_TEST_SKIPS;
+  return ` ${String(passed)} pass\n ${String(skipped)} skip\n 0 fail\nRan ${String(passed + skipped)} tests across 1 file.\n`;
+}
 
 /** The files a command hands its tool after `--`. */
 function handed(cmd: readonly string[]): readonly string[] {
@@ -212,7 +204,7 @@ function passing(cmd: readonly string[]): Answer {
     return { exitCode: 1 };
   }
   if (program === process.execPath && args[1] === 'test') {
-    return { stderr: ' 3 pass\n 0 fail\nRan 3 tests across 1 file.\n' };
+    return { stderr: bunTestSummary(3) };
   }
   switch (tool(cmd)) {
     case 'tsc':
@@ -220,7 +212,7 @@ function passing(cmd: readonly string[]): Answer {
         ? { stdout: 'Version 7.9.4\n' }
         : { stdout: `${resolve('src/a.ts').replaceAll('\\', '/')}\n` };
     case 'eslint':
-      return { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [] }]) };
+      return { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [], suppressedMessages: [] }]) };
     case 'vitest':
       return { stdout: ' Test Files  1 passed (1)\n      Tests  3 passed (3)\n' };
     default:
@@ -251,9 +243,7 @@ function passing(cmd: readonly string[]): Answer {
       : { exitCode: 1, stdout: 'finding.yml:8:9: shellcheck reported issue in this script: SC2086:info:2:6' };
   }
   if (program === binaryPath('zizmor')) {
-    return args.includes('--no-config')
-      ? { exitCode: 13, stdout: JSON.stringify(INHERITED) }
-      : { stderr: WORKFLOWS.map((path) => `completed ${path}\n`).join('') };
+    return { stderr: WORKFLOWS.map((path) => `completed ${path}\n`).join('') };
   }
   return {};
 }
@@ -426,77 +416,37 @@ test('lint names eslint.config.ts and allows no warning', async () => {
   expect(after(call?.cmd ?? [], '--format')).toBe('json');
 });
 
-/* ///// lint and the rule no directive may waive ///// */
-
-/** One report as ESLint's json formatter lists it: `ruleId` at `line`, column 1. */
-interface Report {
-  readonly ruleId: string;
-  readonly severity: number;
-  readonly message: string;
-  readonly line: number;
-  readonly column: number;
-}
-
-/** The report `ruleId` gives at `line`. */
-function report(ruleId: string, line: number): Report {
-  return { ruleId, severity: 2, message: `${ruleId} reported here`, line, column: 1 };
-}
-
-/** The answer for every call but ESLint's, which reports `suppressed` against src/a.ts and nothing else. */
-function suppressing(suppressed: readonly Report[]): (cmd: readonly string[]) => Answer {
-  return (cmd: readonly string[]): Answer =>
-    tool(cmd) === 'eslint'
-      ? { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [], suppressedMessages: suppressed }]) }
-      : passing(cmd);
-}
-
-interface SuppressedCase {
-  readonly label: string;
-  readonly suppressed: readonly Report[];
-  /** The lines of src/a.ts where a directive suppressed gate/visible-reason. */
-  readonly lines: readonly number[];
-}
-
-// ESLint applies a directive to the problems at its own position, so a
-// directive naming gate/visible-reason suppresses that rule's report on the
-// directive itself: the -line form on its own line, and a block disable on
-// every line up to its enable. ESLint still lists each suppressed report, so
-// the row refuses one there, naming the file and the line.
-const SUPPRESSED_CASES: readonly SuppressedCase[] = [
-  {
-    label: 'a -line directive naming the rule beside the one it waives',
-    suppressed: [report('no-debugger', 1), report('gate/visible-reason', 1)],
-    lines: [1],
-  },
-  {
-    label: 'a block disable of the rule, closed by its enable',
-    suppressed: [report('gate/visible-reason', 1), report('gate/visible-reason', 2), report('no-debugger', 3)],
-    lines: [1, 2],
-  },
-];
-
-test.each([...SUPPRESSED_CASES])('lint refuses $label', async ({ suppressed, lines }: SuppressedCase) => {
+// The second pass reads no comment as a directive or configuration, and it
+// exits 1 wherever a waiver turns a rule off, so it allows warnings.
+test('lint runs a second pass over the same tree with --no-inline-config, eslint.config.ts and json', async () => {
   plantTree();
-  answer = suppressing(suppressed);
 
-  const message = await outcome(() => row('lint').check(false));
+  await row('lint').check(false);
 
-  expect(message).toStartWith(
-    `eslint reported ${String(lines.length)} gate/visible-reason ${lines.length === 1 ? 'problem' : 'problems'} a directive suppressed`,
-  );
-  for (const line of lines) {
-    expect(message).toContain(
-      `${JSON.stringify(resolve('src/a.ts'))}:${String(line)}:1  a directive suppresses gate/visible-reason here`,
-    );
-  }
-  expect(message).not.toContain('no-debugger reported here');
+  const passes = callsToTool('eslint').map((call) => call.cmd.slice(BUNX.length + 1));
+  expect(passes).toHaveLength(2);
+  expect(passes[0]).not.toContain('--no-inline-config');
+  expect(passes[1]).toEqual(['--config', 'eslint.config.ts', '--no-inline-config', '.', '--format', 'json']);
 });
 
-test('lint passes a report of another rule a directive suppressed', async () => {
+test('lint refuses a report from a comment rule that the second pass alone sees', async () => {
   plantTree();
-  answer = suppressing([report('no-debugger', 3)]);
+  const file = resolve('src/a.ts');
+  const report = {
+    ruleId: '@eslint-community/eslint-comments/no-use',
+    severity: 2,
+    message: 'Unexpected ESLint directive comment.',
+    line: 1,
+    column: 0,
+  };
+  answer = (cmd: readonly string[]): Answer =>
+    tool(cmd) === 'eslint' && cmd.includes('--no-inline-config')
+      ? { exitCode: 1, stdout: JSON.stringify([{ filePath: file, messages: [report], suppressedMessages: [] }]) }
+      : passing(cmd);
 
-  expect(await outcome(() => row('lint').check(false))).toBe('passed');
+  expect(await outcome(() => row('lint').check(false))).toBe(
+    `${JSON.stringify(file)}:1:0  @eslint-community/eslint-comments/no-use reports this with every directive and configuration comment ignored, and no comment may turn that rule off: Unexpected ESLint directive comment.`,
+  );
 });
 
 test('format names .prettierrc and .prettierignore, reads no .editorconfig, and hands over the files Prettier formats', async () => {
@@ -901,8 +851,10 @@ interface CountCase {
 
 // The row fails when the run checked nothing, whatever vitest's exit code
 // says: no test counted, or every counted test skipped or left to do. vitest
-// reports a name filter as a skip, and the row allows none, so it fails on any
-// skipped or todo test too. Its line names the tests and the files.
+// reports a name filter as a skip, and the gate declares none for the row, so
+// it fails on any skipped or todo test too. vitest counts a case marked to fail
+// as passing when its body fails, so the row fails on any expected fail. Its
+// line names the tests and the files.
 const COUNT_CASES: readonly CountCase[] = [
   {
     label: 'every test passed',
@@ -912,17 +864,17 @@ const COUNT_CASES: readonly CountCase[] = [
   {
     label: 'some tests skipped',
     answer: { stdout: ' Test Files  1 passed (1)\n      Tests  8 passed | 2 skipped (10)\n' },
-    expected: 'vitest skipped or left to do 2 of its 10 tests, past the 0 the row allows',
+    expected: 'vitest skipped or left to do 2 of its 10 tests, and the gate declares 0 on this platform',
   },
   {
     label: 'a todo counts as skipped',
     answer: { stdout: ' Test Files  1 passed (1)\n      Tests  3 passed | 1 todo (4)\n' },
-    expected: 'vitest skipped or left to do 1 of its 4 tests, past the 0 the row allows',
+    expected: 'vitest skipped or left to do 1 of its 4 tests, and the gate declares 0 on this platform',
   },
   {
     label: 'a name filter that leaves one test running',
     answer: { stdout: ' Test Files  1 passed | 5 skipped (6)\n      Tests  1 passed | 329 skipped (330)\n' },
-    expected: 'vitest skipped or left to do 329 of its 330 tests, past the 0 the row allows',
+    expected: 'vitest skipped or left to do 329 of its 330 tests, and the gate declares 0 on this platform',
   },
   {
     label: 'every test skipped',
@@ -933,6 +885,60 @@ const COUNT_CASES: readonly CountCase[] = [
     label: 'skipped and todo reach the count',
     answer: { stdout: ' Test Files  1 skipped (1)\n      Tests  2 skipped | 1 todo (3)\n' },
     expected: 'vitest skipped every one of its 3 tests',
+  },
+  {
+    label: 'an expected fail beside passing tests',
+    answer: { stdout: ' Test Files  7 passed (7)\n      Tests  330 passed | 1 expected fail (331)\n' },
+    expected:
+      'vitest counted 1 of its 331 tests as an expected fail. vitest passes a case marked to fail, through .fails or a fails: true option, when its body fails, the way bun test counts a failing case as a pass, so an inverted case passes unseen. Fix the code or the test instead',
+  },
+  {
+    label: 'every test an expected fail',
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  2 expected fail (2)\n' },
+    expected: 'vitest counted 2 of its 2 tests as an expected fail',
+  },
+  // A node-pool test writes to vitest's own stdout, and to stderr, so the row
+  // reads stdout alone and refuses a second line shaped like the summary.
+  {
+    label: "a summary-shaped line a test printed ahead of vitest's own",
+    answer: {
+      stdout:
+        '      Tests  334 passed (334)\n Test Files  7 passed (7)\n      Tests  331 passed | 1 expected fail | 1 skipped (333)\n',
+    },
+    expected: `vitest's stdout holds 2 lines shaped like its Tests summary, and vitest prints one, so a test printed the others: ${JSON.stringify('Tests  334 passed (334)')}, ${JSON.stringify('Tests  331 passed | 1 expected fail | 1 skipped (333)')}`,
+  },
+  {
+    label: "a summary-shaped line after vitest's own, each adding up",
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  3 passed (3)\n      Tests  3 passed (3)\n' },
+    expected: "vitest's stdout holds 2 lines shaped like its Tests summary",
+  },
+  {
+    label: 'a summary-shaped line a test wrote to stderr',
+    answer: {
+      stdout: ' Test Files  7 passed (7)\n      Tests  331 passed | 1 skipped (332)\n',
+      stderr: '      Tests  335 passed (335)\n',
+    },
+    expected: 'vitest skipped or left to do 1 of its 332 tests, and the gate declares 0 on this platform',
+  },
+  {
+    label: 'labels that do not add up to the total',
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  3 passed (5)\n' },
+    expected: `vitest's Tests line on stdout, ${JSON.stringify('Tests  3 passed (5)')}, does not add its labels up to its total of 5, so it is not a summary the row can read`,
+  },
+  {
+    label: 'a label the row does not read',
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  9 passed | 1 pending (10)\n' },
+    expected: `vitest's Tests line on stdout, ${JSON.stringify('Tests  9 passed | 1 pending (10)')}, names "pending", a label the row does not read. It counts passed, skipped and todo, and refuses expected fail and failed, so a count under any other label is refused rather than read as nothing`,
+  },
+  {
+    label: 'a failure counted on an exit of 0',
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  2 passed | 1 failed (3)\n' },
+    expected: 'vitest counted 1 of its 3 tests as failed and exited 0, so its summary and its exit code disagree',
+  },
+  {
+    label: 'a total past what a number holds exactly',
+    answer: { stdout: ' Test Files  1 passed (1)\n      Tests  99999999999999999999 passed (99999999999999999999)\n' },
+    expected: `vitest's Tests line on stdout, ${JSON.stringify('Tests  99999999999999999999 passed (99999999999999999999)')}, carries a total past what the row counts exactly`,
   },
   {
     label: 'no Tests line',
@@ -957,18 +963,23 @@ function vitestRun(stdout: string): Finished {
   return { exitCode: 0, stdout, stderr: '', heldOpen: false };
 }
 
-// A skip allowance lets that many skipped or todo tests through and no more,
-// and never lets every test be skipped.
+// A declared skip count passes exactly that many skipped or todo tests, and
+// never lets every test be skipped.
 test.each([
-  ['within it passes and names the skips', 2, 'line: 10 tests across 1 file, 2 skipped'],
-  ['past it fails', 1, 'vitest skipped or left to do 2 of its 10 tests, past the 1 the row allows'],
-])('a vitest skip allowance: a count %s', (_label: string, allowed: number, expected: string) => {
+  ['equal to it passes and names the skips', 2, 'line: 10 tests across 1 file, 2 skipped'],
+  ['past it fails', 1, 'vitest skipped or left to do 2 of its 10 tests, and the gate declares 1 on this platform'],
+  [
+    'short of it fails',
+    3,
+    'vitest skipped or left to do 2 of its 10 tests, and the gate declares 3 on this platform, so the declaration names a skip that no longer happens',
+  ],
+])('a vitest skip declaration: a count %s', (_label: string, allowed: number, expected: string) => {
   const finished = vitestRun(' Test Files  1 passed (1)\n      Tests  8 passed | 2 skipped (10)\n');
 
   expect(outcomeOf(() => check.vitestCount(finished, allowed))).toStartWith(expected);
 });
 
-test('a vitest skip allowance never passes a run whose every test was skipped', () => {
+test('a vitest skip declaration never passes a run whose every test was skipped', () => {
   const finished = vitestRun(' Test Files  1 skipped (1)\n      Tests  3 skipped (3)\n');
 
   expect(outcomeOf(() => check.vitestCount(finished, 5))).toStartWith('vitest skipped every one of its 3 tests');
@@ -1024,12 +1035,17 @@ test('the test row reads a vitest summary written in color', async () => {
 });
 
 test('scripts:test reads a bun test summary written in color, its skip line included', async () => {
+  const skipped = check.SCRIPTS_TEST_SKIPS;
   answer = (cmd: readonly string[]): Answer =>
     isBunTest(cmd)
-      ? { stderr: ` ${colored('3 pass')}\n ${colored('1 skip')}\n${colored('Ran')} 4 tests across 1 file.\n` }
+      ? {
+          stderr: ` ${colored('3 pass')}\n ${colored(`${String(skipped)} skip`)}\n${colored('Ran')} ${String(3 + skipped)} tests across 1 file.\n`,
+        }
       : passing(cmd);
 
-  expect(await lineOrMessage(() => row('scripts:test').check(false))).toBe('line: 4 tests across 1 file, 1 skipped');
+  expect(await lineOrMessage(() => row('scripts:test').check(false))).toBe(
+    `line: ${String(3 + skipped)} tests across 1 file, ${String(skipped)} skipped`,
+  );
 });
 
 /** A row, and an answer that colors the part of one tool's output that row reads. */
@@ -1075,9 +1091,7 @@ const COLOR_CASES: readonly ColorCase[] = [
     name: 'workflows',
     tool: "zizmor's completed line",
     answer: (cmd: readonly string[]): Answer =>
-      cmd[0] === binaryPath('zizmor') && !cmd.includes('--no-config')
-        ? { stderr: `${colored('completed')} .github/workflows/ci.yml\n` }
-        : passing(cmd),
+      cmd[0] === binaryPath('zizmor') ? { stderr: `${colored('completed')} .github/workflows/ci.yml\n` } : passing(cmd),
   },
 ];
 
@@ -1268,88 +1282,4 @@ test('actionlint refuses a ShellCheck path holding a single quote before actionl
     quotedShellcheck = false;
     await row('tools').check(false);
   }
-});
-
-/* ///// The secrets-inherit hold ///// */
-
-/** zizmor's report of one job passing secrets: inherit from `file` to `callee`. */
-function inheritedCall(file: string, callee: string): (typeof INHERITED)[number] {
-  return {
-    ident: 'secrets-inherit',
-    locations: [
-      {
-        symbolic: { kind: 'Primary', key: { Local: { verbatim_path: `.github/workflows/${file}` } } },
-        concrete: { feature: callee, location: { start_point: { row: 9 } } },
-      },
-    ],
-  };
-}
-
-/** The answer for every call but the hold's zizmor run, which prints `report`. */
-function holdAnswers(report: unknown): (cmd: readonly string[]) => Answer {
-  return (cmd: readonly string[]): Answer =>
-    cmd[0] === binaryPath('zizmor') && cmd.includes('--no-config')
-      ? { exitCode: 13, stdout: JSON.stringify(report) }
-      : passing(cmd);
-}
-
-// The hold runs zizmor with no config and inline ignores off, so it sees every
-// job that passes secrets: inherit, waived or not, and no ZIZMOR_CONFIG can
-// name a config against --no-config.
-test('the hold runs zizmor over .github with no config, no ignores and json output', async () => {
-  plantTree();
-
-  await row('workflows').check(true);
-
-  const hold = callsTo(binaryPath('zizmor')).find((call) => call.cmd.includes('--no-config'));
-  expect(hold?.cmd.slice(1)).toEqual([
-    '--no-progress',
-    '--offline',
-    '--no-config',
-    '--no-ignores',
-    '--strict-collection',
-    '--format',
-    'json',
-    '--collect=all',
-    '.github',
-  ]);
-  expect(Object.hasOwn(hold?.env ?? {}, 'ZIZMOR_CONFIG')).toBe(true);
-  expect(hold?.env['ZIZMOR_CONFIG']).toBeUndefined();
-});
-
-test('the hold refuses a job that passes secrets: inherit outside zachthedev/.github', async () => {
-  plantTree();
-  answer = holdAnswers([
-    inheritedCall('cd.yml', 'someone-else/.github/.github/workflows/release-pr.yml@abc'),
-    inheritedCall('deps.yml', 'zachthedev/.github/.github/workflows/deps.yml@abc'),
-  ]);
-
-  const message = await outcome(() => row('workflows').check(true));
-
-  expect(message).toContain('".github/workflows/cd.yml" line 10');
-  expect(message).toContain('"someone-else/.github/.github/workflows/release-pr.yml@abc"');
-});
-
-test('the hold refuses a waived file that holds no such job', async () => {
-  plantTree();
-  answer = holdAnswers([inheritedCall('cd.yml', 'zachthedev/.github/.github/workflows/release-pr.yml@abc')]);
-
-  expect(await outcome(() => row('workflows').check(true))).toContain('the secrets-inherit waiver names "deps.yml"');
-});
-
-test('the hold reads its waivers from the committed zizmor.yml', async () => {
-  plantTree();
-  writeFileSync(
-    '.github/zizmor.yml',
-    'rules:\n  secrets-inherit:\n    ignore:\n      - cd.yml\n      - deps.yml\n      - release.yml\n',
-  );
-
-  expect(await outcome(() => row('workflows').check(true))).toContain('the secrets-inherit waiver names "release.yml"');
-});
-
-test('the hold fails on a zizmor.yml that does not parse', async () => {
-  plantTree();
-  writeFileSync('.github/zizmor.yml', 'rules: [unclosed\n');
-
-  expect(await outcome(() => row('workflows').check(true))).toContain('.github/zizmor.yml does not parse');
 });

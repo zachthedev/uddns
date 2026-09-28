@@ -69,6 +69,172 @@ export function compilerFinding(printed: string, spec: string): string | undefin
   return undefined;
 }
 
+/* ///// What ESLint reports ///// */
+
+/** One message ESLint's json formatter reports against a file. */
+export interface LintMessage {
+  readonly ruleId?: string | null;
+  readonly severity?: number;
+  readonly message?: string;
+  readonly line?: number;
+  readonly column?: number;
+}
+
+/** One file ESLint's json formatter reports on. */
+export interface LintResult {
+  readonly filePath: string;
+  readonly messages: readonly LintMessage[];
+  /** The reports a directive turned off, which ESLint lists whatever the directive says. */
+  readonly suppressedMessages: readonly LintMessage[];
+}
+
+/** Whether `value`, parsed from ESLint's json output, is one file's result. */
+function isLintResult(value: unknown): value is LintResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { filePath?: unknown }).filePath === 'string' &&
+    Array.isArray((value as { messages?: unknown }).messages) &&
+    Array.isArray((value as { suppressedMessages?: unknown }).suppressedMessages)
+  );
+}
+
+/** The gate's rule that refuses a waiver whose reason holds no letter or digit. */
+const VISIBLE_REASON = 'gate/visible-reason';
+
+/** The rule that holds a TypeScript waiver comment to a description. */
+const BAN_TS_COMMENT = '@typescript-eslint/ban-ts-comment';
+
+/** The prefix of every rule of the plugin that checks ESLint's own directive comments. */
+const ESLINT_COMMENTS = '@eslint-community/eslint-comments/';
+
+/** Whether `ruleId` names a rule that reads comments: the visible-reason rule, ban-ts-comment, or an eslint-comments rule. */
+function isCommentRule(ruleId: string | null | undefined): boolean {
+  return ruleId === VISIBLE_REASON || ruleId === BAN_TS_COMMENT || (ruleId ?? '').startsWith(ESLINT_COMMENTS);
+}
+
+/** Where `message` sits in the file `result` names, as a finding opens. */
+function position(result: LintResult, message: LintMessage): string {
+  return `${quote(result.filePath)}:${String(message.line ?? 0)}:${String(message.column ?? 0)}`;
+}
+
+/**
+ * Every file result in the json one ESLint pass, `finished`, printed.
+ *
+ * @remarks
+ * The json formatter prints no control sequence, and every child gets
+ * NO_COLOR, so the raw stdout is parsed. {@link plain} strips a one-byte CSI
+ * together with the backslash JSON writes before a quote, so stripping first
+ * would let a file name rewrite the json's structure. A message string is
+ * stripped where the row prints it, after the parse.
+ *
+ * @throws When the pass printed no json, which means ESLint stopped before it
+ * linted anything, or json that is not a list of file results
+ */
+function lintResults(label: string, finished: Finished): LintResult[] {
+  let results: unknown;
+  try {
+    results = JSON.parse(finished.stdout);
+  } catch {
+    throw new Error(`${label} ${describe(finished)}`);
+  }
+  if (!Array.isArray(results) || !results.every((result) => isLintResult(result))) {
+    throw new Error(`${label} printed json that is not a list of file results: ${describe(finished)}`);
+  }
+  return results;
+}
+
+/**
+ * The file results of the lint row's first pass, `finished`: ESLint over the
+ * tree with the repository's config, every comment read and no warning
+ * allowed.
+ *
+ * @remarks
+ * ESLint applies a directive to the reports at its own position, so a
+ * directive naming {@link VISIBLE_REASON} hides the rule's report on that
+ * directive, and a block disable naming it hides every report up to its
+ * enable. ESLint lists each report a directive turned off under
+ * `suppressedMessages`, which no directive empties and no exit code counts,
+ * so each such report of that rule is refused here.
+ *
+ * @throws When ESLint printed no file results, exited other than 0, naming
+ * each problem, linted no file, or turned off a report of
+ * {@link VISIBLE_REASON}
+ */
+export function lintedAsWritten(finished: Finished): LintResult[] {
+  const results = lintResults('eslint', finished);
+  const problems = results.flatMap((result) =>
+    result.messages.map(
+      (message) =>
+        `${position(result, message)}  ${message.severity === 2 ? 'error' : 'warning'}  ${plain(message.message ?? '')}  ${plain(message.ruleId ?? '')}`,
+    ),
+  );
+  const suppressed = results.flatMap((result) =>
+    result.suppressedMessages
+      .filter((message) => message.ruleId === VISIBLE_REASON)
+      .map(
+        (message) =>
+          `${position(result, message)}  a directive turned off ${VISIBLE_REASON}, which no directive may do. Take the rule out of the directive and give each waiver a reason in words`,
+      ),
+  );
+  if (finished.exitCode !== 0) {
+    throw new Error(
+      `eslint exited ${String(finished.exitCode)} over ${files(results.length)}:\n${[...problems, ...suppressed, finished.stderr.trim()].filter((line) => line.length > 0).join('\n')}`,
+    );
+  }
+  if (results.length === 0) {
+    throw new Error('eslint linted no file, so it checked nothing');
+  }
+  if (suppressed.length > 0) {
+    throw new Error(suppressed.join('\n'));
+  }
+  return results;
+}
+
+/**
+ * The lint row's line from its second pass, `finished`: ESLint over the tree
+ * with `--no-inline-config`, against `first`, the first pass's file results.
+ *
+ * @remarks
+ * A configuration comment setting a rule to off turns it off for its whole
+ * file, so the rule reports nothing there and nothing lands in
+ * `suppressedMessages` either. Under `--no-inline-config` ESLint reads no
+ * comment as a directive or as configuration, so every rule that reads
+ * comments runs over every file, and each of its reports is one a comment hid
+ * from the first pass. That pass exits 1 wherever a directive waives another
+ * rule, so its exit code decides nothing but a crash.
+ *
+ * @throws When the pass printed no file results, exited other than 0 or 1,
+ * linted other files than the first pass, or reports a rule that reads
+ * comments
+ */
+export function lintedWithoutComments(finished: Finished, first: readonly LintResult[]): string {
+  const label = 'eslint --no-inline-config';
+  const results = lintResults(label, finished);
+  if (finished.exitCode !== 0 && finished.exitCode !== 1) {
+    throw new Error(`${label} ${describe(finished)}`);
+  }
+  const read = (all: readonly LintResult[]): string[] => all.map((result) => result.filePath).sort();
+  const [these, those] = [read(results), read(first)];
+  if (these.length !== those.length || these.some((path, index) => path !== those[index])) {
+    throw new Error(
+      `${label} linted ${files(these.length)} and the first pass ${files(those.length)}, not the same ones, so the two passes read different trees`,
+    );
+  }
+  const unwaived = results.flatMap((result) =>
+    result.messages
+      .filter((message) => isCommentRule(message.ruleId))
+      .map(
+        (message) =>
+          `${position(result, message)}  ${plain(message.ruleId ?? '')} reports this with every directive and configuration comment ignored, and no comment may turn that rule off: ${plain(message.message ?? '')}`,
+      ),
+  );
+  if (unwaived.length > 0) {
+    throw new Error(unwaived.join('\n'));
+  }
+  return files(results.length);
+}
+
 /* ///// Test counts ///// */
 
 /** The line bun test ends its summary with. */
@@ -89,13 +255,21 @@ const SUMMARY_COUNT = /^\s*(\d+) (pass|fail|skip|todo|filtered out)$/;
  * comes last, and the block's counts must add up to the tests it ran. bun
  * test exits 0 over a file that holds no test and over one whose every test
  * is skipped, and a name pattern leaves tests out of the count and prints how
- * many it filtered out.
+ * many it filtered out. A skip or a todo counts against `allowed`, the skips
+ * the gate declares for the suite on this platform, and a count on either side
+ * of it fails: one more is a skip nobody declared, and one fewer leaves room
+ * for an undeclared skip to pass unseen.
  *
+ * @param label - The command, for the row's messages
+ * @param finished - The bun test run
+ * @param allowed - How many of the suite's tests skip on this platform by
+ * design, as the gate declares
  * @throws When it ran no test, when the counts above its `Ran` line do not
  * add up to it, when a test failed, when every test it counted was skipped or
- * left to do, or when a name pattern filtered any out
+ * left to do, when a name pattern filtered any out, or when the skips and the
+ * todos differ from `allowed`
  */
-export function testCount(label: string, finished: Finished): string {
+export function testCount(label: string, finished: Finished, allowed: number): string {
   const lines = plain(finished.stderr).split('\n');
   const at = lines.findLastIndex((line) => RAN.test(line));
   const ran = RAN.exec(lines[at] ?? '');
@@ -126,6 +300,11 @@ export function testCount(label: string, finished: Finished): string {
   if (count('filtered out') > 0) {
     throw new Error(
       `${label} left ${String(count('filtered out'))} tests out through a name pattern, so its count is not the suite`,
+    );
+  }
+  if (skipped !== allowed) {
+    throw new Error(
+      `${label} skipped ${String(skipped)} of its ${String(tests)} tests, and the gate declares ${String(allowed)} on this platform, so ${skipped > allowed ? 'a test skipped that no declaration names' : 'the declaration names a skip that no longer happens'}. Change the test, or the declared count in scripts/check.ts`,
     );
   }
   const skip = skipped > 0 ? `, ${String(skipped)} skipped` : '';
@@ -176,7 +355,7 @@ const PRETTIER_IGNORE = /(?:\/\/|\/\*|#|<!--|\{\{!(?:--)?)[\s*]*prettier[-]ignor
  *
  * @remarks
  * Prettier leaves the code after the comment as written, in every language it
- * formats, and no tool asks for a reason. Prettier 3.9.8 honors the comment
+ * formats, and no tool asks for a reason. The pinned Prettier honors the comment
  * when a `//`, `/*`, `#`, `<!--`, `{{!` or `{{!--` opener precedes the
  * keyword with nothing but spacing between, a block comment spanning lines
  * included, in every language it formats and every language embedded in one.
@@ -189,85 +368,4 @@ export function ignoreCommentFindings(path: string, text: string): string[] {
     const line = text.slice(0, match.index + match[0].length).split('\n').length;
     return `${quote(path)} line ${String(line)} carries a Prettier ignore comment, which leaves the code after it unformatted with no reason given. Format the code instead`;
   });
-}
-
-/* ///// secrets: inherit ///// */
-
-/** One job zizmor reports passing `secrets: inherit`: its file, the line of its `uses:`, and what it calls. */
-export interface InheritedCall {
-  readonly path: string;
-  readonly line: number;
-  readonly callee: string;
-}
-
-/**
- * The jobs in zizmor's JSON report, `printed` on its stdout, that pass
- * `secrets: inherit`, read from each finding's primary location.
- *
- * @throws When the report is not JSON in the shape zizmor 1.30 prints
- */
-export function inheritedCalls(printed: string): InheritedCall[] {
-  let report: unknown;
-  try {
-    report = JSON.parse(plain(printed));
-  } catch {
-    throw new Error('zizmor printed no json');
-  }
-  if (!Array.isArray(report)) {
-    throw new Error('zizmor printed json that is not a list of findings');
-  }
-  const calls: InheritedCall[] = [];
-  for (const finding of report as unknown[]) {
-    const { ident, locations } = (finding ?? {}) as { ident?: unknown; locations?: unknown };
-    if (ident !== 'secrets-inherit') {
-      continue;
-    }
-    const primary = (Array.isArray(locations) ? (locations as unknown[]) : []).find(
-      (location) => (location as { symbolic?: { kind?: unknown } } | null)?.symbolic?.kind === 'Primary',
-    ) as
-      | {
-          symbolic?: { key?: { Local?: { verbatim_path?: unknown } } };
-          concrete?: { feature?: unknown; location?: { start_point?: { row?: unknown } } };
-        }
-      | undefined;
-    const path = primary?.symbolic?.key?.Local?.verbatim_path;
-    const row = primary?.concrete?.location?.start_point?.row;
-    const feature = primary?.concrete?.feature;
-    if (typeof path !== 'string' || typeof row !== 'number' || typeof feature !== 'string') {
-      throw new Error('zizmor reported a secrets-inherit finding with no primary file, line and callee');
-    }
-    calls.push({ path: path.replaceAll('\\', '/'), line: row + 1, callee: feature.replace(/^["']|["']$/g, '') });
-  }
-  return calls;
-}
-
-/**
- * A finding for every call in `calls` whose callee starts with none of
- * `held`, compared without regard to case, and for every file `waived` names
- * that holds no call.
- *
- * @remarks
- * A waiver names a file, not the workflow a job there calls, so a job pointed
- * at another repository keeps its waiver and hands that repository every
- * secret. A waived file with no call means the audit or the waiver went stale,
- * and a hold that counts nothing proves nothing.
- */
-export function inheritedCallFindings(
-  calls: readonly InheritedCall[],
-  held: readonly string[],
-  waived: readonly string[],
-): string[] {
-  const stray = calls
-    .filter((call) => !held.some((prefix) => call.callee.toLowerCase().startsWith(prefix)))
-    .map(
-      (call) =>
-        `${quote(call.path)} line ${String(call.line)} passes secrets: inherit to ${quote(call.callee)}. Only a reusable workflow of zachthedev/.github takes a caller's secrets`,
-    );
-  const idle = waived
-    .filter((name) => !calls.some((call) => call.path.split('/').at(-1) === name.split(':')[0]))
-    .map(
-      (name) =>
-        `the secrets-inherit waiver names ${quote(name)}, and zizmor reported no job there passing secrets: inherit, so the waiver or the audit is stale`,
-    );
-  return [...stray, ...idle];
 }

@@ -1,4 +1,7 @@
-# The gitignored files a new worktree is seeded with. .gitignore syntax.
+# The gitignored files a new worktree is seeded with. Each is a local record
+# that a worktree needs on day one and the repository never carries, such as a
+# service's local settings. A worktree installs its own node_modules/
+# (CONTRIBUTING.md#setup). .gitignore syntax.
 # Worker secrets for `bun run dev`, copied from .dev.vars.template.
 .dev.vars
 # Account, custom domain and access key for a local `bun run deploy`, copied from .env.local.template.
