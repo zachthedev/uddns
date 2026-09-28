@@ -140,7 +140,7 @@ try {
   process.exitCode = 2;
 }
 
-// Bun 1.4.2 ends a file with no import or export before its read of stdin
+// The pinned Bun ends a file with no import or export before its read of stdin
 // settles, exit 0 with nothing printed, so the empty export makes this file a
 // module that waits on the await above.
 export {};

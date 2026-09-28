@@ -9,28 +9,27 @@
  * CONTRIBUTING.md points at. CI's gate job runs this file on three platforms,
  * so a green run here is a green run there.
  *
- * No row resolves a tool from the machine's PATH. The programs the gate
- * expects there, git, mise and gh, are the prerequisites CONTRIBUTING.md#setup
- * names. Bun is the process running this file, every JavaScript tool starts
- * through `bun x --bun --no-install` once the checkout's node_modules/.bin
- * holds it, and every other tool resolves through `mise which`. Every tool
- * that searches for a config runs with its one config named. Before any row,
- * the gate refuses to run beside a config a tool would read in place of the
- * one the gate names, a tracked env file Bun loads, a project config outside
- * the named paths, a node_modules below the root, a JSON key Bun and the
- * shared commits job read two ways, a patch a package.json names, anything
- * that would steer how Bun resolves the gate's own imports, a workflow the
- * workflows row would not read, or an inline zizmor waiver under .github. No
- * config's text is held: code-owner review is the control on a change to one.
- * The other files that run code before the gate's first line, such as a
- * bunfig.toml preload, are refused before a merge by the shared commits and
- * workflows jobs. A pull request cannot edit those jobs at the pin ci.yml
- * calls, and code-owner review of .github/workflows/ is the control on a
- * change to that pin or to the job that runs this file. Every row that walks
- * the tree says how many files it checked and fails when that is none. The
- * rows that run the repository's own code come last, and the preflight runs
- * again after each. No row carries a deadline: the CI job's timeout-minutes
- * bounds the gate.
+ * No row resolves a tool from the machine's PATH. Bun is the process running
+ * this file, every JavaScript tool starts through `bun x --bun --no-install`
+ * once the checkout's node_modules/.bin holds it, and every other tool resolves
+ * through `mise which`. The programs the gate starts from PATH are git, mise
+ * and gh, the prerequisites CONTRIBUTING.md#setup names. Every tool that
+ * searches for a config runs with its one config named. Before any row, the
+ * gate refuses to run beside a config a tool would read in place of the one the
+ * gate names, a project config outside the named paths, a node_modules below
+ * the root, anything that would steer how Bun resolves the gate's own imports,
+ * a workflow the workflows row would not read, or a composite action outside
+ * .github/actions/. No config's text is held: code-owner review is the control
+ * on a change to one. The tracked files that run code or waive a check before
+ * any row reads them, such as an env file, a patchedDependencies key, a
+ * repeated JSON key, a bunfig.toml preload or an inline zizmor waiver, are
+ * refused before a merge by the shared commits and workflows jobs. A pull
+ * request cannot edit those jobs at the pin ci.yml calls, and code-owner review
+ * of .github/workflows/ is the control on a change to that pin or to the job
+ * that runs this file. Every row that walks the tree says how many files it
+ * checked and fails when that is none. The rows that run the repository's own
+ * code come last, and the preflight runs again after each. No row carries a
+ * deadline: the CI job's timeout-minutes bounds the gate.
  *
  * CI and the push hook start this file as `bun --no-env-file scripts/check.ts`,
  * not through `bun run`, because the script runner puts the checkout's
@@ -57,8 +56,8 @@ import {
   compilerFinding,
   files,
   ignoreCommentFindings,
-  inheritedCallFindings,
-  inheritedCalls,
+  lintedAsWritten,
+  lintedWithoutComments,
   taploFound,
   testCount,
   unreadSourceFinding,
@@ -83,8 +82,9 @@ const BUN = process.execPath;
 /**
  * The flag every Bun the gate starts directly gets first, so no env file on
  * disk sets a variable inside the row: the scripts:test run and the ShellCheck
- * stand-in. Bun 1.4.2 honors it over all eight names it loads, in every mode.
- * `bun x` ignores it, so no JavaScript tool gets it.
+ * stand-in. The pinned Bun honors it over every env file it loads, in each
+ * mode, as a case in run.test.ts holds. `bun x` ignores it, so no JavaScript
+ * tool gets it.
  */
 const NO_ENV_FILE = '--no-env-file';
 
@@ -213,6 +213,22 @@ function batches(paths: readonly string[]): string[][] {
 const TEST_ENV: Readonly<Record<string, string>> = { CI: 'true' };
 
 /**
+ * How many of the gate's own tests skip on this platform by design: the cases
+ * for a behavior only Windows has skip on Linux and macOS, and the cases for
+ * one Windows lacks skip there. The scripts:test row fails on any other count,
+ * so on Windows it fails where the temporary directory's volume keeps no 8.3
+ * short names, since the short-name case skips there too.
+ */
+export const SCRIPTS_TEST_SKIPS = process.platform === 'win32' ? 2 : 6;
+
+/**
+ * How many of the repository's own tests skip on this platform by design. The
+ * test row fails on any other count. vitest reports a test a name filter left
+ * out as skipped, so a skip is the only sign of a filtered run it gives.
+ */
+export const TEST_SKIPS = 0;
+
+/**
  * NO_PROXY for a package that talks to workerd on this machine: the gate's
  * own list in whichever spellings the platform reads, and the loopback names,
  * each value once.
@@ -246,7 +262,7 @@ async function scriptsTest(): Promise<string> {
   if (finished.exitCode !== 0) {
     throw new Error(`bun test ./scripts/ ${describe(finished)}`);
   }
-  return testCount('bun test ./scripts/', finished);
+  return testCount('bun test ./scripts/', finished, SCRIPTS_TEST_SKIPS);
 }
 
 /* ///// tools ///// */
@@ -266,13 +282,14 @@ async function tools(): Promise<undefined> {
 /** The TypeScript projects the typecheck row checks, one tsc pass each. */
 export const PROJECTS: readonly string[] = [TSCONFIG, 'tests/tsconfig.json', 'scripts/tsconfig.json'];
 
-/** The package.json name of the native TypeScript 7 compiler the typecheck row runs. */
+/** The package.json name of the native TypeScript compiler the typecheck row runs. */
 const NATIVE = '@typescript/native';
 
-// The native TypeScript 7 compiler, from the `@typescript/native` alias. The
-// 6.x `typescript` package that typescript-eslint needs ships a tsc too, and
-// bun install links a command two packages claim to the one whose name sorts
-// first, so node_modules/.bin/tsc is the alias's. The row first holds
+// The native TypeScript compiler, from the `@typescript/native` alias. The
+// `typescript` package typescript-eslint needs, on the last major carrying the
+// JavaScript compiler API, ships a tsc too, and bun install links a command
+// two packages claim to the one whose name sorts first, so
+// node_modules/.bin/tsc is the alias's. The row first holds
 // `tsc --version` to the major package.json pins for the alias, so a renamed
 // alias or another tie-break turns it red. Each project is named, so tsc never
 // searches past the checkout for a config, and scripts/ carries its own, so
@@ -454,103 +471,17 @@ async function toml(): Promise<string> {
 
 /* ///// lint ///// */
 
-/** One message ESLint's json formatter reports against a file. */
-interface LintMessage {
-  readonly ruleId?: string | null;
-  readonly severity?: number;
-  readonly message?: string;
-  readonly line?: number;
-  readonly column?: number;
-}
-
-/** One file ESLint's json formatter reports on. */
-interface LintResult {
-  readonly filePath: string;
-  readonly messages: readonly LintMessage[];
-  /** The reports a directive in the file suppressed, which ESLint lists whatever the directive says. */
-  readonly suppressedMessages?: readonly LintMessage[];
-}
-
-/** Whether `value`, parsed from ESLint's json output, is one file's result. */
-function isLintResult(value: unknown): value is LintResult {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const suppressed = (value as { suppressedMessages?: unknown }).suppressedMessages;
-  return (
-    typeof (value as { filePath?: unknown }).filePath === 'string' &&
-    Array.isArray((value as { messages?: unknown }).messages) &&
-    (suppressed === undefined || Array.isArray(suppressed))
-  );
-}
-
-/**
- * The rule no directive may suppress: the gate's own rule, which checks the
- * reason on every waiver.
- *
- * @remarks
- * ESLint applies a directive to the problems at its own position, so a
- * directive that names this rule suppresses the rule's report on that same
- * directive, and a block disable of it silences every waiver up to its enable.
- * The json formatter lists each suppressed report under `suppressedMessages`,
- * which no directive can empty, so the lint row refuses one there.
- *
- * Deviates from the handbook's kickstart: the Bun kickstart's lint row reads
- * `messages` alone.
- */
-const UNWAIVABLE_RULE = 'gate/visible-reason';
-
-// The json formatter names every file ESLint linted, so the row counts them
-// and prints each problem itself. --config names the one config, so ESLint
-// runs no eslint.config.* nearer a file than the root.
+// Two passes, each with the json formatter, which names every file ESLint
+// linted, so the row counts them and prints each problem itself. The first
+// reads every comment and allows no warning. The second reads no comment as a
+// directive or as configuration, and the row refuses every report there from a
+// rule that reads comments, over the same files. rows.ts holds what the row
+// concludes from each. --config names the one config, so ESLint runs no
+// eslint.config.* nearer a file than the root.
 async function lint(): Promise<string> {
-  const finished = await run([
-    ...jsTool('eslint'),
-    '--config',
-    ESLINT_CONFIG,
-    '.',
-    '--max-warnings=0',
-    '--format',
-    'json',
-  ]);
-  let results: unknown;
-  try {
-    results = JSON.parse(plain(finished.stdout));
-  } catch {
-    // No json means ESLint stopped before it linted anything, a config error among them.
-    throw new Error(`eslint ${describe(finished)}`);
-  }
-  if (!Array.isArray(results) || !results.every((result) => isLintResult(result))) {
-    throw new Error(`eslint printed json that is not a list of file results: ${describe(finished)}`);
-  }
-  const problems = results.flatMap((result) =>
-    result.messages.map(
-      (message) =>
-        `${quote(result.filePath)}:${String(message.line ?? 0)}:${String(message.column ?? 0)}  ${message.severity === 2 ? 'error' : 'warning'}  ${message.message ?? ''}  ${message.ruleId ?? ''}`,
-    ),
-  );
-  const waived = results.flatMap((result) =>
-    (result.suppressedMessages ?? [])
-      .filter((message) => message.ruleId === UNWAIVABLE_RULE)
-      .map(
-        (message) =>
-          `${quote(result.filePath)}:${String(message.line ?? 0)}:${String(message.column ?? 0)}  a directive suppresses ${UNWAIVABLE_RULE} here, and no directive may waive it  ${message.message ?? ''}`,
-      ),
-  );
-  if (finished.exitCode !== 0) {
-    throw new Error(
-      `eslint exited ${String(finished.exitCode)} over ${files(results.length)}:\n${[...problems, ...waived, finished.stderr.trim()].filter((line) => line.length > 0).join('\n')}`,
-    );
-  }
-  if (waived.length > 0) {
-    throw new Error(
-      `eslint reported ${String(waived.length)} ${UNWAIVABLE_RULE} ${waived.length === 1 ? 'problem' : 'problems'} a directive suppressed, and the rule that checks waivers takes none:\n${waived.join('\n')}`,
-    );
-  }
-  if (results.length === 0) {
-    throw new Error('eslint linted no file, so it checked nothing');
-  }
-  return files(results.length);
+  const eslint = [...jsTool('eslint'), '--config', ESLINT_CONFIG];
+  const first = lintedAsWritten(await run([...eslint, '.', '--max-warnings=0', '--format', 'json']));
+  return lintedWithoutComments(await run([...eslint, '--no-inline-config', '.', '--format', 'json']), first);
 }
 
 /* ///// workflows ///// */
@@ -695,85 +626,7 @@ async function workflows(quick: boolean): Promise<string> {
       `zizmor completed ${files(completed.size)}, and these tracked workflows were not among them: ${unaudited.map((path) => quote(path)).join(', ') || 'none'}`,
     );
   }
-  const held = await inheritedCallsHeld(await binary('zizmor'));
-  return `${files(workflowFiles.length)}, zizmor ${online ? 'online' : 'offline'} over ${files(completed.size)}, ${String(held)} secrets-inherit ${held === 1 ? 'call' : 'calls'} held`;
-}
-
-/** What a job that passes `secrets: inherit` may call: a reusable workflow of zachthedev/.github. */
-const INHERIT_CALLEE = 'zachthedev/.github/.github/workflows/';
-
-/**
- * The files the committed zizmor.yml's `secrets-inherit` rule waives, or none
- * when it names no such rule.
- *
- * @throws When the config does not parse, or the list holds anything but strings
- */
-async function inheritWaivers(): Promise<string[]> {
-  let parsed: unknown;
-  try {
-    parsed = Bun.YAML.parse(await Bun.file(ZIZMOR_CONFIG).text());
-  } catch (error: unknown) {
-    throw new Error(
-      `${ZIZMOR_CONFIG} does not parse as the gate reads YAML, so its secrets-inherit waivers are unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
-      { cause: error },
-    );
-  }
-  const ignore = (parsed as { rules?: { 'secrets-inherit'?: { ignore?: unknown } } } | null)?.rules?.['secrets-inherit']
-    ?.ignore;
-  if (ignore === undefined) {
-    return [];
-  }
-  if (!Array.isArray(ignore) || !ignore.every((entry) => typeof entry === 'string')) {
-    throw new Error(`${ZIZMOR_CONFIG} rules.secrets-inherit.ignore is not a list of file names`);
-  }
-  return ignore;
-}
-
-/**
- * How many jobs pass `secrets: inherit`, each held to {@link INHERIT_CALLEE},
- * with a call in every file the committed zizmor.yml waives.
- *
- * @remarks
- * zizmor runs with no config and with inline ignore comments off, so it
- * reports every such job, waived or not. ZIZMOR_CONFIG would name a config
- * against --no-config, so it is removed. zizmor exits 10 to 14 when it reports
- * findings.
- *
- * @throws When zizmor fails, a job calls anything else, or a waived file holds no call
- */
-async function inheritedCallsHeld(zizmor: string): Promise<number> {
-  const finished = await run(
-    [
-      zizmor,
-      '--no-progress',
-      '--offline',
-      '--no-config',
-      '--no-ignores',
-      '--strict-collection',
-      '--format',
-      'json',
-      '--collect=all',
-      '.github',
-    ],
-    { ZIZMOR_CONFIG: undefined },
-  );
-  if (finished.exitCode !== 0 && (finished.exitCode < 10 || finished.exitCode > 14)) {
-    throw new Error(`zizmor with no config ${describe(finished)}`);
-  }
-  let calls: ReturnType<typeof inheritedCalls>;
-  try {
-    calls = inheritedCalls(finished.stdout);
-  } catch (error: unknown) {
-    throw new Error(
-      `zizmor with no config: ${error instanceof Error ? error.message : String(error)}. It ${describe(finished)}`,
-      { cause: error },
-    );
-  }
-  const refused = inheritedCallFindings(calls, [INHERIT_CALLEE], await inheritWaivers());
-  if (refused.length > 0) {
-    throw new Error(refused.join('\n'));
-  }
-  return calls.length;
+  return `${files(workflowFiles.length)}, zizmor ${online ? 'online' : 'offline'} over ${files(completed.size)}`;
 }
 
 /* ///// test ///// */
@@ -781,12 +634,11 @@ async function inheritedCallsHeld(zizmor: string): Promise<number> {
 /** The one vitest config, named so vitest searches for no other. */
 const VITEST_CONFIG = 'vitest.config.mts';
 
-/**
- * How many skipped or todo tests the test row lets through. vitest reports a
- * test a name filter left out as skipped, so a skip is the only sign of a
- * filtered run it gives, and the suite holds no skipped or todo test.
- */
-const VITEST_SKIPS_ALLOWED = 0;
+/** The `Tests` line of vitest's summary: its counts under labels, then the total in parentheses. */
+const VITEST_TESTS_LINE = /^\s*Tests\s+(.*)\((\d+)\)\s*$/;
+
+/** The labels of vitest's `Tests` line the test row counts. It refuses every other label. */
+const VITEST_COUNTED_LABELS: readonly string[] = ['passed', 'skipped', 'todo'];
 
 /**
  * What a finished vitest run counted, for the test row's line.
@@ -794,30 +646,103 @@ const VITEST_SKIPS_ALLOWED = 0;
  * @remarks
  * vitest exits 1 when it finds no test file, and 0 when every test it ran was
  * skipped or left to do. It reports a test a name filter left out as skipped.
- * So the row reads the summary's `Tests` line.
+ * So the row reads the summary's `Tests` line. A skip or a todo counts against
+ * `allowed`, and a count on either side of it fails: one more is a skip nobody
+ * declared, and one fewer leaves room for an undeclared skip to pass unseen.
+ * vitest counts a case marked to fail, through `.fails` or a `fails: true`
+ * option on a test or a suite, as passing when its body fails, and prints it
+ * as an expected fail, the way bun test counts a failing case as a pass. So an
+ * inverted case passes every count, and the row refuses any expected fail.
+ * rows.ts's testCount reads bun test's summary alone, so vitest's is read here.
  *
- * @param allowed - How many skipped or todo tests pass, {@link VITEST_SKIPS_ALLOWED} for the row
- * @throws When the run counted no test, skipped or left to do every one, or
- * skipped or left to do more than `allowed`
+ * A test in vitest's node pool writes to the same stdout as vitest, above its
+ * summary, and to stderr, below all of stdout once the two are joined. So the
+ * row reads stdout alone and refuses it when more than one line has the
+ * `Tests` line's shape, wherever a test printed the other. Each count under a
+ * label must be an exact integer, and together they must add up to the total
+ * in the parentheses, as testCount holds the counts above bun test's `Ran`
+ * line to it. The row reads {@link VITEST_COUNTED_LABELS} and refuses every
+ * other label by name, so a label a vitest release renames fails the row
+ * rather than hiding a skip or an inverted case under a count nobody reads.
+ *
+ * @param allowed - How many of the suite's tests skip on this platform by
+ * design, {@link TEST_SKIPS} for the row
+ * @throws When stdout holds more than one `Tests` line, the run counted no
+ * test, a count is not an exact integer or not a count under a label, the
+ * run counted an expected fail, a failure or a label the row does not read,
+ * the counts do not add up to the total, the run skipped or left to do every
+ * test, or it skipped or left to do other than `allowed`
  */
-export function vitestCount(finished: Finished, allowed: number = VITEST_SKIPS_ALLOWED): string {
-  const printed = plain(`${finished.stdout}\n${finished.stderr}`);
-  const tests = /^\s*Tests\s+(.*)\((\d+)\)\s*$/m.exec(printed);
+export function vitestCount(finished: Finished, allowed: number): string {
+  const lines = plain(finished.stdout).split(/\r?\n/);
+  const summaries = lines.filter((line) => VITEST_TESTS_LINE.test(line));
+  if (summaries.length > 1) {
+    throw new Error(
+      `vitest's stdout holds ${String(summaries.length)} lines shaped like its Tests summary, and vitest prints one, so a test printed the others: ${summaries.map((line) => quote(line.trim())).join(', ')}`,
+    );
+  }
+  const [line = ''] = summaries;
+  const tests = VITEST_TESTS_LINE.exec(line);
   const total = Number(tests?.[2] ?? 0);
-  if (total === 0) {
+  if (tests === null || total === 0) {
     throw new Error(`vitest counted no test, so the row checks nothing: ${describe(finished)}`);
   }
-  const counted = (label: string): number => Number(new RegExp(`(\\d+) ${label}`).exec(tests?.[1] ?? '')?.[1] ?? 0);
+  if (!Number.isSafeInteger(total)) {
+    throw new Error(
+      `vitest's Tests line on stdout, ${quote(line.trim())}, carries a total past what the row counts exactly`,
+    );
+  }
+  const counts = new Map<string, number>();
+  for (const part of (tests[1] ?? '').split('|')) {
+    const labeled = /^\s*(\d+) ([a-z]+(?: [a-z]+)*)\s*$/.exec(part);
+    const count = Number(labeled?.[1] ?? Number.NaN);
+    if (labeled === null || !Number.isSafeInteger(count)) {
+      throw new Error(
+        `vitest's Tests line on stdout, ${quote(line.trim())}, holds ${quote(part.trim())}, which is not an exact count under a label`,
+      );
+    }
+    const label = labeled[2] ?? '';
+    counts.set(label, (counts.get(label) ?? 0) + count);
+  }
+  const counted = (label: string): number => counts.get(label) ?? 0;
+  const inverted = counted('expected fail');
+  if (inverted > 0) {
+    throw new Error(
+      `vitest counted ${String(inverted)} of its ${String(total)} tests as an expected fail. vitest passes a case marked to fail, through .fails or a fails: true option, when its body fails, the way bun test counts a failing case as a pass, so an inverted case passes unseen. Fix the code or the test instead`,
+    );
+  }
+  const failed = counted('failed');
+  if (failed > 0) {
+    throw new Error(
+      `vitest counted ${String(failed)} of its ${String(total)} tests as failed and exited 0, so its summary and its exit code disagree`,
+    );
+  }
+  const unread = [...counts.keys()].filter(
+    (label) => !VITEST_COUNTED_LABELS.includes(label) && label !== 'expected fail' && label !== 'failed',
+  );
+  if (unread.length > 0) {
+    throw new Error(
+      `vitest's Tests line on stdout, ${quote(line.trim())}, names ${unread.map((label) => quote(label)).join(' and ')}, a label the row does not read. It counts ${VITEST_COUNTED_LABELS.slice(0, -1).join(', ')} and ${VITEST_COUNTED_LABELS.at(-1) ?? ''}, and refuses expected fail and failed, so a count under any other label is refused rather than read as nothing`,
+    );
+  }
+  const sum = [...counts.values()].reduce((running, count) => running + count, 0);
+  if (sum !== total) {
+    throw new Error(
+      `vitest's Tests line on stdout, ${quote(line.trim())}, does not add its labels up to its total of ${String(total)}, so it is not a summary the row can read`,
+    );
+  }
   const skipped = counted('skipped') + counted('todo');
   if (skipped >= total) {
     throw new Error(`vitest skipped every one of its ${String(total)} tests, so the row checks nothing`);
   }
-  if (skipped > allowed) {
+  if (skipped !== allowed) {
     throw new Error(
-      `vitest skipped or left to do ${String(skipped)} of its ${String(total)} tests, past the ${String(allowed)} the row allows, and it reports a test a name filter left out as skipped`,
+      `vitest skipped or left to do ${String(skipped)} of its ${String(total)} tests, and the gate declares ${String(allowed)} on this platform, so ${skipped > allowed ? 'a test skipped that no declaration names, or a name filter left it out' : 'the declaration names a skip that no longer happens'}. Change the test, or the declared count in scripts/check.ts`,
     );
   }
-  const testFiles = Number(/^\s*Test Files\s+.*\((\d+)\)\s*$/m.exec(printed)?.[1] ?? 0);
+  const testFiles = Number(
+    lines.map((each) => /^\s*Test Files\s+.*\((\d+)\)\s*$/.exec(each)).findLast((match) => match !== null)?.[1] ?? 0,
+  );
   const skip = skipped > 0 ? `, ${String(skipped)} skipped` : '';
   return `${String(total)} ${total === 1 ? 'test' : 'tests'} across ${files(testFiles)}${skip}`;
 }
@@ -840,7 +765,7 @@ async function test(): Promise<string> {
   if (finished.exitCode !== 0) {
     throw new Error(`vitest run --coverage exited ${String(finished.exitCode)}. The report is above`);
   }
-  return vitestCount(finished);
+  return vitestCount(finished, TEST_SKIPS);
 }
 
 /* ///// The rows ///// */
@@ -875,7 +800,7 @@ export const rows: readonly Row[] = [
   {
     name: 'workflows',
     checks:
-      'actionlint over every tracked workflow with ShellCheck behind a stand-in that refuses its directives, both proven by a canary, each workflow proven linted, then zizmor over .github with nothing ignored and each workflow proven audited, online in check when gh has a token and offline otherwise, then every job passing secrets: inherit held to a reusable workflow of zachthedev/.github',
+      'actionlint over every tracked workflow with ShellCheck behind a stand-in that refuses its directives, both proven by a canary, each workflow proven linted, then zizmor over .github with nothing ignored and each workflow proven audited, online in check when gh has a token and offline otherwise',
     check: workflows,
   },
   {
@@ -887,21 +812,21 @@ export const rows: readonly Row[] = [
   {
     name: 'lint',
     checks:
-      'eslint over the tree with eslint.config.ts alone and no warnings allowed, counting the files it linted, and no gate/visible-reason report a directive suppressed',
+      'eslint over the tree with eslint.config.ts alone and no warnings allowed, counting the files it linted, and no gate/visible-reason report a directive turned off, then eslint again over the same files with --no-inline-config and no report from a rule that reads comments',
     check: lint,
     runsCode: true,
   },
   {
     name: 'scripts:test',
     checks:
-      "bun test over the gate's own scripts/*.test.ts, every program they start a stand-in, counting the tests and failing when every one was skipped",
+      "bun test over the gate's own scripts/*.test.ts, every program they start a stand-in, counting the tests and failing on a skip count other than the one declared for this platform",
     check: scriptsTest,
     runsCode: true,
   },
   {
     name: 'test',
     checks:
-      'vitest run --coverage with vitest.config.mts, counting the tests and failing when every one was skipped, left out by check:quick',
+      'vitest run --coverage with vitest.config.mts, counting the tests and failing on an expected fail and on a skip count other than the one declared for this platform, left out by check:quick',
     check: test,
     slow: true,
     runsCode: true,

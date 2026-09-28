@@ -1,28 +1,26 @@
 /**
  * The files the gate's tools find by name, refused where they would change
- * what a row checks: a config a tool with no config flag would read, a tracked
- * env file, a project config outside the named paths, a node_modules below the
- * root, a JSON key Bun and the shared commits job read two ways, a patch a
- * package.json names, a workflow the workflows row would not read, and what
- * resolves the gate's own imports.
+ * what a row checks: a config a tool with no config flag would read, a project
+ * config outside the named paths, a node_modules below the root, a workflow
+ * the workflows row would not read, and what resolves the gate's own imports.
  *
  * @remarks
  * The gate calls {@link trackedFindings} and {@link startupFindings} before
  * any row, and again after each row that runs repository code. This file and
  * everything it imports read Bun and `node:` built-ins alone, so the checks
  * run on a checkout with no install. No config's text is held here: code-owner
- * review is the control on a change to one. The other refusals of files that
- * run code before the gate starts, such as a tracked node_modules or a
- * bunfig.toml preload, live once in the shared commits and workflows jobs. The
- * comparison helpers here serve tools.ts too, which holds mise.toml and
- * mise.lock. What differs between repositories of the set lives in
- * expected.ts.
+ * review is the control on a change to one. The refusals of tracked files that
+ * run code or waive a check before any row reads them, such as a tracked env
+ * file, a `patchedDependencies` key, a repeated JSON key or a bunfig.toml
+ * preload, live once in the shared commits and workflows jobs. The comparison
+ * helpers here serve tools.ts too, which holds mise.toml and mise.lock. What
+ * differs between repositories of the set lives in expected.ts.
  */
 
 import type { Dirent } from 'node:fs';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { join } from 'node:path';
 import { EXPECTED_PROJECT_CONFIGS } from './expected';
 import { describe, fold, git, quote } from './run';
 
@@ -102,26 +100,11 @@ export async function directoryEntries(path: string): Promise<Dirent[]> {
 /** How many node_modules directories a finding names before it counts the rest. */
 const NODE_MODULES_SHOWN = 5;
 
-/**
- * The files Bun 1.4.2 loads into the environment of `bun run` from the
- * directory it starts in: the plain pair and each mode's pair.
- */
-const BUN_ENV_FILES: readonly string[] = [
-  '.env',
-  '.env.local',
-  '.env.development',
-  '.env.development.local',
-  '.env.production',
-  '.env.production.local',
-  '.env.test',
-  '.env.test.local',
-];
-
 /** A program that reads a file it finds by name: the names it reads, and the one the gate names for it. */
 interface ConfigSearch {
   /** What a refused file is, read after "is". */
   readonly what: string;
-  /** Every path the program reads, as a pattern over the folded path: `*` is any run within one segment, and a leading `**` slash is any directory, the root included. */
+  /** Every path the program reads, as a pattern over the folded path: `*` is any run within one segment. */
   readonly paths: readonly string[];
   /** The one path the gate names for the program, which passes in this exact spelling alone. */
   readonly named?: string;
@@ -142,21 +125,13 @@ interface ConfigSearch {
  * @remarks
  * Prettier, ESLint, commitlint, taplo and zizmor each run with their one
  * config named, and the named form stops every other name each reads, so none
- * is listed here. actionlint, lefthook and Bun's env loader take no config
- * flag, so every other name they read is refused. The patterns reach past each
- * program's own search where that costs nothing, to any directory and any
- * extension. The shared commits job refuses an env file at the root alone, so
- * the gate keeps its refusal at every depth. The root `.config` directory,
- * which mise, lefthook and cosmiconfig read whatever a flag names, is refused
- * whole on its own.
+ * is listed here. actionlint and lefthook take no config flag, so every other
+ * name they read is refused. The patterns reach past each program's own
+ * search where that costs nothing, to any extension. The root `.config`
+ * directory, which mise, lefthook and cosmiconfig read whatever a flag names,
+ * is refused whole on its own.
  */
 const CONFIG_SEARCHES: readonly ConfigSearch[] = [
-  {
-    what: 'an env file Bun loads',
-    paths: BUN_ENV_FILES.map((name) => `**/${name}`),
-    reads: 'Bun loads it into the environment of every bun run started beside it',
-    personal: true,
-  },
   {
     what: 'an actionlint config',
     paths: ['.github/actionlint.yaml', '.github/actionlint.yml'],
@@ -178,145 +153,15 @@ const CONFIG_SEARCHES: readonly ConfigSearch[] = [
 
 /** `glob`, one of a {@link ConfigSearch}'s paths, as a pattern over a whole folded path. */
 function searchPattern(glob: string): RegExp {
-  const anywhere = glob.startsWith('**/');
-  const body = (anywhere ? glob.slice(3) : glob)
+  const body = glob
     .split('*')
     .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
     .join('[^/]*');
-  return new RegExp(`^${anywhere ? '(?:.*/)?' : ''}${body}$`);
+  return new RegExp(`^${body}$`);
 }
 
 /** The names Bun and typescript-eslint read a project's TypeScript options from. */
 const PROJECT_CONFIG_NAMES: readonly string[] = ['tsconfig.json', 'jsconfig.json'];
-
-/** The tracked JSON files whose keys decide a refusal of the shared commits job, by folded name. */
-const KEYED_NAMES: readonly string[] = ['package.json', ...PROJECT_CONFIG_NAMES];
-
-/**
- * The `package.json` key bun install reads patches from. A patch bun.lock
- * records with no entry here is not applied, so the manifest is the file read.
- *
- * @remarks
- * The shared commits job refuses this key too, but its jq test passes when jq
- * fails, and jq stops at a nesting depth of 256 where JSON.parse and Bun read
- * deeper. The gate keeps this copy until that job fails closed on a jq error.
- */
-const PATCHES_KEY = 'patchedDependencies';
-
-/**
- * Every key that appears twice within one object of `text`, which is JSON
- * that parses.
- *
- * @remarks
- * Strings are skipped whole, and a key is decoded, so an escaped spelling
- * counts as the key it spells.
- */
-function repeatedKeys(text: string): string[] {
-  const repeated: string[] = [];
-  // One entry per open object or array; an array has no keys.
-  const open: (Set<string> | undefined)[] = [];
-  let at = 0;
-  while (at < text.length) {
-    const character = text[at];
-    if (character === '"') {
-      let end = at + 1;
-      while (text[end] !== '"') {
-        end += text[end] === '\\' ? 2 : 1;
-      }
-      const token = text.slice(at, end + 1);
-      at = end + 1;
-      while (/\s/.test(text[at] ?? '')) {
-        at++;
-      }
-      const keys = open.at(-1);
-      if (keys !== undefined && text[at] === ':') {
-        const key = String(JSON.parse(token));
-        if (keys.has(key)) {
-          repeated.push(key);
-        }
-        keys.add(key);
-      }
-      continue;
-    }
-    if (character === '{') {
-      open.push(new Set());
-    } else if (character === '[') {
-      open.push(undefined);
-    } else if (character === '}' || character === ']') {
-      open.pop();
-    }
-    at++;
-  }
-  return repeated;
-}
-
-/**
- * Every key the gate refuses in the tracked JSON file `config`, as findings:
- * {@link PATCHES_KEY} at the top of a `package.json`, and a key repeated
- * within one object of the file or of a file its `extends` chain reads.
- * `file` is the file read at this step, and `seen` the ones read before it,
- * so a cycle ends.
- *
- * @remarks
- * Bun's package.json and tsconfig reader keeps the first of two equal keys,
- * and the shared commits job reads each file with jq, which keeps the last.
- * A repeated `patchedDependencies` or `paths` could then pass that job while
- * Bun applies it. `extends` is followed where it names a file relative to the
- * config inside the checkout, as written or with `.json` added. The commits
- * job refuses any other. A file that does not parse as plain JSON is a
- * finding, since which keys it holds is unknown.
- */
-function keyFindings(config: string, file: string, seen: Set<string>): string[] {
-  const at = resolve(file);
-  if (seen.has(at)) {
-    return [];
-  }
-  seen.add(at);
-  const shown =
-    file === config ? quote(config) : `${quote(config)}, through ${quote(relative('.', at).replaceAll('\\', '/'))},`;
-  let text: string;
-  let parsed: unknown;
-  try {
-    text = readFileSync(at, 'utf8');
-    parsed = JSON.parse(text);
-  } catch (error: unknown) {
-    return [
-      `${shown} does not parse as plain JSON, so which keys it holds is unknown: ${quote(error instanceof Error ? error.message : String(error))}`,
-    ];
-  }
-  const found: string[] = [];
-  if (
-    file === config &&
-    fold(basename(config)) === PACKAGE_JSON &&
-    isTable(parsed) &&
-    Object.hasOwn(parsed, PATCHES_KEY)
-  ) {
-    found.push(
-      `${quote(config)} carries a ${PATCHES_KEY} key, and bun install applies each patch it names over the package bun.lock pins, so a tool a row runs can change while its pin stays the same. Remove it`,
-    );
-  }
-  const repeated = repeatedKeys(text);
-  if (repeated.length > 0) {
-    return [
-      ...found,
-      `${shown} repeats ${repeated.map((key) => quote(key)).join(', ')} within one object, and Bun reads the first where the shared commits job reads the last. Remove the repeat`,
-    ];
-  }
-  const extended = isTable(parsed) ? parsed['extends'] : undefined;
-  for (const target of Array.isArray(extended) ? extended : [extended]) {
-    if (typeof target !== 'string' || !/^\.\.?[\\/]/.test(target)) {
-      continue;
-    }
-    const next = [resolve(dirname(at), target), resolve(dirname(at), `${target}.json`)].find((candidate) =>
-      existsSync(candidate),
-    );
-    const inside = next === undefined ? '..' : relative(realpathSync.native('.'), realpathSync.native(next));
-    if (next !== undefined && !inside.startsWith('..') && !isAbsolute(inside)) {
-      found.push(...keyFindings(config, next, seen));
-    }
-  }
-  return found;
-}
 
 /**
  * A finding against the project config at `path` when it sits outside the
@@ -424,32 +269,42 @@ function workflowFindings(path: string, segments: readonly string[]): string[] {
   return found;
 }
 
-/**
- * An inline zizmor waiver, which zizmor honors in any file it audits. Spaces
- * and case are allowed to differ, so a spelling zizmor might read never
- * passes.
- */
-const ZIZMOR_IGNORE_COMMENT = /zizmor\s*:\s*ignore\s*\[/i;
+/** The one directory a composite action lives under, in this exact spelling. */
+const ACTIONS = '.github/actions/';
+
+/** The names a composite action's metadata file takes, in this exact spelling. */
+const ACTION_NAMES: readonly string[] = ['action.yml', 'action.yaml'];
 
 /**
- * A finding when the tracked file at `path`, under `.github`, carries an
- * inline zizmor waiver, or none.
+ * A finding when the tracked file at `path` is a composite action's metadata
+ * file outside {@link ACTIONS}, or one named in another case, or none.
  *
  * @remarks
- * A waiver belongs in zizmor.yml, the one place a reviewer reads waivers. The
- * shared workflows job refuses one too, but it searches with `git grep -I`,
- * which passes over a file `.gitattributes` marks `-diff`. The gate keeps this
- * copy until that job searches with `git grep -a`.
+ * zizmor, in the workflows row and in the shared workflows job, reads
+ * `.github` alone, while `uses: ./<path>` runs an action from anywhere in the
+ * checkout. An action at any other path, such as `tools/x` or a `.GitHub`
+ * spelled in another case, would run with no audit, so every one lives under
+ * `.github/actions/` in that spelling. A name is compared folded, and only its
+ * exact spelling passes: zizmor reads `action.yml` and `action.yaml` alone,
+ * while a case-insensitive runner opens `ACTION.YML` for either.
  */
-function zizmorWaiverFindings(path: string, segments: readonly string[]): string[] {
-  if (segments[0] !== '.github' || !existsSync(path)) {
+function actionFindings(path: string, segments: readonly string[]): string[] {
+  const name = segments.at(-1) ?? '';
+  if (!ACTION_NAMES.includes(name)) {
     return [];
   }
-  return ZIZMOR_IGNORE_COMMENT.test(readFileSync(path, 'utf8'))
-    ? [
-        `${quote(path)} carries a zizmor ignore comment, and zizmor waives the audit it names. A waiver is an entry in ${ZIZMOR_CONFIG}`,
-      ]
-    : [];
+  if (!path.startsWith(ACTIONS)) {
+    return [
+      `${quote(path)} is a composite action outside ${ACTIONS}, where zizmor reads none, while uses: ./<path> runs one from anywhere in the checkout. Move it under ${ACTIONS}`,
+    ];
+  }
+  const spelled = path.split('/').at(-1) ?? '';
+  if (!ACTION_NAMES.includes(spelled)) {
+    return [
+      `${quote(path)} names a composite action in another case than ${ACTION_NAMES.join(' or ')}, which zizmor never reads, while a case-insensitive runner opens it for uses:. Rename it ${name}`,
+    ];
+  }
+  return [];
 }
 
 /** The paths one `git ls-files` call lists, split, or a finding when git fails. */
@@ -492,11 +347,9 @@ async function topLevelFinding(): Promise<string | undefined> {
 /**
  * Every file in the tree the gate refuses to run beside, as findings: a file
  * a program in {@link CONFIG_SEARCHES} reads, a project config outside the
- * named paths, a `node_modules` directory on disk below the root, a key
- * repeated in a tracked package.json or project config, a
- * `patchedDependencies` key in a tracked package.json, a tracked workflow
- * the workflows row would not read or whose shell no linter reads, and an
- * inline zizmor waiver in a tracked file under `.github`.
+ * named paths, a `node_modules` directory on disk below the root, a tracked
+ * workflow the workflows row would not read or whose shell no linter reads,
+ * and a tracked composite action outside `.github/actions/`.
  *
  * @remarks
  * git lists nothing until it names this checkout as its work tree, and a work
@@ -556,11 +409,8 @@ export async function trackedFindings(): Promise<string[]> {
       found.push(...projectConfigFindings(path));
     }
     if (isTracked) {
-      if (KEYED_NAMES.includes(segments.at(-1) ?? '') && existsSync(path)) {
-        found.push(...keyFindings(path, path, new Set()));
-      }
       found.push(...workflowFindings(path, segments));
-      found.push(...zizmorWaiverFindings(path, segments));
+      found.push(...actionFindings(path, segments));
     }
   }
   if (nested.size > 0) {
@@ -633,50 +483,23 @@ async function scriptsFindings(): Promise<string[]> {
 
 /* ///// The root ///// */
 
-/** The manifest at the root, where cosmiconfig reads a key of its own. */
-const PACKAGE_JSON = 'package.json';
-
-/** The key of {@link PACKAGE_JSON} cosmiconfig reads its own settings from. */
-const COSMICONFIG_KEY = 'cosmiconfig';
-
 /**
- * Every root entry a tool reads a config from whatever a flag names, as
- * findings: a `.config` and a `package.yaml`, in any case, and a
- * {@link COSMICONFIG_KEY} key in the root {@link PACKAGE_JSON}.
+ * A finding for a `.config` at the root, in any case, on disk whether tracked
+ * or not.
  *
  * @remarks
- * commitlint searches through cosmiconfig, which reads its own settings from
- * the root package.json, package.yaml and .config before it loads the config
- * commitlint's `--config` names, and a `$import` there runs the module it
- * names inside commitlint. mise and lefthook read the root .config too. The
- * shared commits job refuses the root .config alone.
+ * mise, lefthook and commitlint's cosmiconfig each read a config from the
+ * root .config whatever a flag names, so the gate refuses one on disk, tracked
+ * or not. The shared commits job refuses a tracked one before a merge.
  */
 async function metaConfigFindings(): Promise<string[]> {
   const found: string[] = [];
   for (const entry of await readdir('.', { withFileTypes: true })) {
-    const name = fold(entry.name);
-    if (name === '.config') {
+    if (fold(entry.name) === '.config') {
       found.push(
         `${quote(entry.name)} is at the root, and mise, lefthook and commitlint's cosmiconfig each read a config from it whatever a flag names. Remove it`,
       );
     }
-    if (name === 'package.yaml') {
-      found.push(
-        `${quote(entry.name)} is at the root, and commitlint's cosmiconfig reads its settings from it whatever --config names, a $import that runs a module among them. Remove it`,
-      );
-    }
-  }
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8'));
-  } catch {
-    // A missing manifest names no key, and the tracked listing refuses one that does not parse.
-    manifest = undefined;
-  }
-  if (isTable(manifest) && Object.hasOwn(manifest, COSMICONFIG_KEY)) {
-    found.push(
-      `${PACKAGE_JSON} carries a ${quote(COSMICONFIG_KEY)} key, and commitlint's cosmiconfig reads its settings from it whatever --config names, a $import that runs a module among them. Remove it`,
-    );
   }
   return found;
 }

@@ -1,11 +1,11 @@
 # Git hooks, installed by `lefthook install`, which the package.json prepare
 # script runs on every `bun install`.
 #
-# Every JavaScript tool starts through `bunx --bun --no-install`, which runs
+# Every JavaScript tool starts through `bun x --bun --no-install`, which runs
 # the copy node_modules/.bin holds, under Bun rather than a `node` on PATH, and
-# fetches nothing. With no copy there, bunx runs one from a parent directory,
-# PATH or its own cache, so the install runs after every pull, every branch
-# switch and in every worktree (CONTRIBUTING.md#setup). bunx ignores
+# fetches nothing. With no copy there, `bun x` runs one from a parent
+# directory, PATH or its own cache, so the install runs after every pull, every
+# branch switch and in every worktree (CONTRIBUTING.md#setup). `bun x` ignores
 # --no-env-file, so a personal env file reaches the tool. A hook runs in your
 # own environment and clears nothing from it: hooks are not a control, and
 # CI's gate and commits job decide the merge (CONTRIBUTING.md#safety). When
@@ -22,14 +22,14 @@ pre-commit:
       # --config names the one config, so no eslint.config.* nearer a staged file
       # runs. --no-warn-ignored: a staged file the config's ignores name, such as
       # a generated one, passes rather than warning past --max-warnings=0.
-      run: bunx --bun --no-install eslint --config eslint.config.ts --fix --max-warnings=0 --no-warn-ignored {staged_files}
+      run: bun x --bun --no-install eslint --config eslint.config.ts --fix --max-warnings=0 --no-warn-ignored {staged_files}
       stage_fixed: true
     # --config names the one config, so no other Prettier config file loads,
     # and --no-editorconfig keeps any .editorconfig from setting an option.
     # --ignore-path names .prettierignore alone, so .gitignore never skips a
     # staged file.
     - name: prettier
-      run: bunx --bun --no-install prettier --config .prettierrc --no-editorconfig --ignore-path .prettierignore --write --ignore-unknown {staged_files}
+      run: bun x --bun --no-install prettier --config .prettierrc --no-editorconfig --ignore-path .prettierignore --write --ignore-unknown {staged_files}
       stage_fixed: true
 
 commit-msg:
@@ -39,7 +39,7 @@ commit-msg:
     # .github/commit-scopes.json, both by way of commitlint.config.js, which
     # --config names, so commitlint searches for no other config.
     - name: commitlint
-      run: bunx --bun --no-install commitlint --config commitlint.config.js --edit {1}
+      run: bun x --bun --no-install commitlint --config commitlint.config.js --edit {1}
 
 pre-push:
   jobs:

@@ -5,9 +5,58 @@ import prettierConfig from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 import { gatePlugin } from './scripts/eslint-plugin';
 
-// typescript-eslint reads types through the TypeScript 6.x compiler API, which the native TypeScript 7 compiler
-// does not expose, so the `typescript` package it resolves stays on 6.x beside the `@typescript/native` alias the
-// typecheck row runs.
+/**
+ * The syntax every file refuses. Bun runs any file as code under an import
+ * attribute naming a loader, such as `with { type: 'js' }` on a .txt import,
+ * which no row reads as code. An import carries `type: 'json'` or no
+ * attribute, and a dynamic import takes no options.
+ */
+const LOADER_ATTRIBUTES = [
+  {
+    selector: "ImportAttribute:not([key.name='type'][value.value='json']):not([key.value='type'][value.value='json'])",
+    message: "Bun runs a file as code under a loader attribute. Import with `type: 'json'` or no attribute.",
+  },
+  {
+    selector: 'ImportExpression[options]',
+    message: 'Bun runs a file as code under a loader attribute. Import JSON with a static import.',
+  },
+];
+
+/**
+ * The syntax a test file also refuses. bun test counts a failing or failingIf
+ * case as a pass and names it nowhere in its summary, so an inverted test
+ * passes every row that counts tests. A test file reads neither name as a
+ * member on any chain, such as `test.concurrent.failing`, nor takes either
+ * apart in a destructuring. It takes no `test`, `it` or `describe` apart, and
+ * reads none of them, or one step down their chain, by a computed key.
+ */
+const FAILING_CASES = [
+  {
+    selector: 'MemberExpression[property.name=/^failing(If)?$/]',
+    message: 'bun test counts a failing case as a pass. Fix the code or the test instead.',
+  },
+  {
+    selector:
+      'ObjectPattern > Property[key.name=/^failing(If)?$/], ObjectPattern > Property[key.value=/^failing(If)?$/]',
+    message: 'bun test counts a failing case as a pass. Fix the code or the test instead.',
+  },
+  {
+    selector: 'VariableDeclarator[init.name=/^(test|it|describe)$/] > ObjectPattern',
+    message: 'A test file reads test, it and describe by name, so no failing case hides in a destructuring.',
+  },
+  {
+    selector:
+      'MemberExpression[computed=true][object.name=/^(test|it|describe)$/], MemberExpression[computed=true][object.object.name=/^(test|it|describe)$/]',
+    message: 'A test file reads test, it and describe by name, so no failing case hides behind a computed key.',
+  },
+];
+
+/** Every name bun test finds a test file by. */
+const TEST_FILES = ['**/*{.test,_test,.spec,_spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'];
+
+// typescript-eslint reads types through the JavaScript compiler API, which the native TypeScript compiler lacks,
+// so the `typescript` package it resolves stays on the last major carrying that API, beside the `@typescript/native`
+// alias the typecheck row runs.
 export default defineConfig(
   // flat config reads no .gitignore, so every ignored directory a lint could
   // reach is named here, the worktrees Claude Code writes included.
@@ -33,34 +82,35 @@ export default defineConfig(
   // reason. The gate's visible-reason rule refuses a reason there or on a
   // TypeScript waiver comment that holds no letter or digit once
   // default-ignorable code points are removed. ESLint reports a directive
-  // that silences nothing, and the lint row allows no warning.
+  // that silences nothing, and the lint row allows no warning. A comment that
+  // configures ESLint, such as `/* eslint no-debugger: "off" */`, holds a rule
+  // off for its whole file with no enable to close it, so no-use refuses every
+  // directive but the disable and enable forms: a rule's setting and a global
+  // live in this file alone.
   comments.recommended,
   {
     plugins: { gate: gatePlugin },
     rules: {
       '@eslint-community/eslint-comments/require-description': 'error',
+      '@eslint-community/eslint-comments/no-use': [
+        'error',
+        { allow: ['eslint-disable', 'eslint-enable', 'eslint-disable-line', 'eslint-disable-next-line'] },
+      ],
       'gate/visible-reason': 'error',
     },
   },
 
-  // Bun runs any file as code under an import attribute naming a loader, such
-  // as `with { type: 'js' }` on a .txt import, which no row reads as code. An
-  // import carries `type: 'json'` or no attribute, and a dynamic import takes
-  // no options.
+  // A later block's no-restricted-syntax replaces an earlier one's whole, so
+  // the test-file block names the loader selectors again.
   {
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector:
-            "ImportAttribute:not([key.name='type'][value.value='json']):not([key.value='type'][value.value='json'])",
-          message: "Bun runs a file as code under a loader attribute. Import with `type: 'json'` or no attribute.",
-        },
-        {
-          selector: 'ImportExpression[options]',
-          message: 'Bun runs a file as code under a loader attribute. Import JSON with a static import.',
-        },
-      ],
+      'no-restricted-syntax': ['error', ...LOADER_ATTRIBUTES],
+    },
+  },
+  {
+    files: TEST_FILES,
+    rules: {
+      'no-restricted-syntax': ['error', ...LOADER_ATTRIBUTES, ...FAILING_CASES],
     },
   },
 

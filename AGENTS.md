@@ -19,7 +19,7 @@ Read these before changing anything, in order. They bind an agent as they bind a
   as a substitute.
 - `bun run check:quick` is the gate without its test row, the form the push hook runs.
 - `bun run check:rows` prints the rows and runs nothing.
-- `bun run check <row>` runs the named rows.
+- `bun run check <row> [<row> ...]` runs the named rows alone.
 
 [CONTRIBUTING.md#the-gate](CONTRIBUTING.md#the-gate) says what the rows cover and which checks run in CI
 alone.

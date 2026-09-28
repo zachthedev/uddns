@@ -9,7 +9,7 @@
       "separateMajorMinor": false
     },
     {
-      "description": "typescript stays below 6.1.0, the top of typescript-eslint's typescript peer range, because typescript-eslint reads types through the 6.x compiler API that TypeScript 7 does not expose, until typescript-eslint supports TypeScript 7 and this rule and the @typescript/native alias both go: https://typescript-eslint.io/users/dependency-versions",
+      "description": "typescript is held on the last major carrying the JavaScript compiler API, below the first release typescript-eslint's typescript peer range excludes, because typescript-eslint reads types through that API and the native compiler lacks it. This rule and the @typescript/native alias go once typescript-eslint supports the native compiler: https://typescript-eslint.io/users/dependency-versions",
       "matchDepNames": ["typescript"],
       "allowedVersions": "<6.1.0"
     }
