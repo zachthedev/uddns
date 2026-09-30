@@ -60,7 +60,7 @@ jobs:
       # gate starts, which takes its whole environment from the gate.
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
-          version: 2026.9.11
+          version: 2026.9.15
           install: false
           cache: false
           github_token: ''
@@ -103,13 +103,13 @@ jobs:
       # No base or head input: the action then scans the pull request's
       # base..head commits, or a push's before..after. A branch name as base
       # does not resolve in a pull request checkout, and the scan reads nothing.
-      - uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6 # v3.97.5
+      - uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
         with:
           path: ./
           # The action runs the scanner from a Docker image tagged with this
           # input, which defaults to latest. Pinning the SHA above fixes only
           # the action's own script, so the image is pinned here by digest.
-          version: 3.97.5@sha256:1cec88f18ca39e26e04e61fe9d886c9c4e5f2fc0ba4f2ed185cac0722bd8a076
+          version: 3.97.9@sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db
 
   # A called workflow's job gets at most what its caller grants here, so each job grants what
   # the called job's header declares: a checkout and the read-only audits, nothing more.
