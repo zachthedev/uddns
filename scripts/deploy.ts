@@ -40,8 +40,9 @@ if (hasCustomDomain && !HOSTNAME.test(customDomain)) {
 // regular file. jsTool is the gate's check and message. Its command carries
 // --bun, which these starts do not take, so only the check is used. Deviates
 // from the handbook: no start takes --bun, so wrangler runs under the first
-// node on PATH, as the dev and start scripts run it. wrangler deploy under Bun
-// is unmeasured, and only a deploy measures it.
+// node on PATH, as the dev and start scripts run it. The deploy job in cd.yml
+// installs the version .node-version names ahead of the runner's own. wrangler
+// deploy under Bun is unmeasured, and only a deploy measures it.
 try {
   jsTool('wrangler');
 } catch (error: unknown) {
