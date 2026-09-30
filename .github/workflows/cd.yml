@@ -90,13 +90,20 @@ jobs:
           # Pinned to packageManager, so the revision that reached production
           # was built by the bun the lockfile was resolved with.
           bun-version-file: package.json
+          # A job holding a secret restores no cached tool. Any job on main
+          # that runs dependency code can save a Bun under the key this step
+          # reads, and the step's version check asks the restored binary
+          # itself. So the step downloads Bun on every run.
+          no-cache: true
 
       # wrangler's bin starts under the first node on PATH, since no start in
       # scripts/deploy.ts takes --bun. This puts the version .node-version
       # names ahead of the runner image's own node. A job holding a secret
       # restores no package cache, so cache stays unset. package-manager-cache
       # is off too: the action restores npm's cache on its own whenever
-      # package.json names npm as its package manager.
+      # package.json names npm as its package manager. node itself comes from
+      # the runner image's tool directory or a download, never from the
+      # Actions cache, so no cached copy reaches this job.
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
