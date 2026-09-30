@@ -590,8 +590,10 @@ Setup that CI installs at a pinned version takes a line for that copy.
   among them, wrangler and vitest included: the registry's record, held in `bun.lock`. workerd and esbuild load
   their platform binaries from packages `bun.lock` records too ([Dependencies](#dependencies)).
 - Bun itself, in CI: a version alone, named by `packageManager` in `package.json`, which `oven-sh/setup-bun`
-  installs in the gate, audit and deploy jobs. The cooldown is the control, because the setup action checks no
-  download. Locally, Bun is your own install ([Setup](#setup)).
+  installs in each CI job that runs Bun. The cooldown is the control, because the setup action checks no download.
+  Every job that installs Bun, the deploy job aside, can restore a copy an earlier run saved to the Actions cache,
+  and a version alone says nothing about who saved it. None of those jobs holds a secret. The deploy job restores
+  no cached copy. Locally, Bun is your own install ([Setup](#setup)).
 - Node.js itself, in CI: a version alone, named by `.node-version`, which `actions/setup-node` installs in the deploy
   job for wrangler. The cooldown is the control, because the setup action checks no download. Locally, Node.js is
   your own install ([Setup](#setup)).
