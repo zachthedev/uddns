@@ -14,7 +14,9 @@ The machine needs:
   files through `git ls-files`, and the `cf-typegen:check` row diffs the types file against the index.
 - [gh](https://cli.github.com), optional. When `gh auth token` answers, the gate runs zizmor online. Otherwise
   zizmor runs offline and no token is needed.
-- [Node.js](https://nodejs.org), for `bun run dev` and `bun run deploy` alone ([Running it](#running-it)).
+- [Node.js](https://nodejs.org), for every wrangler command started without `--bun`: `bun run dev`, `bun run start`,
+  `bun run deploy` and the commands in [docs/deploy.md](docs/deploy.md). Each starts wrangler under the first `node`
+  on `PATH` ([Running it](#running-it)).
 
 Bun, git, mise and gh are every program the gate starts from `PATH`: Bun runs the gate, and the gate starts git,
 mise and gh by name. Every other program it runs is a package under `node_modules/` or a tool `mise which` names.
@@ -44,7 +46,8 @@ hook runs the quick gate, without its test row, and refuses the push when it fai
 `package.json` scripts and the gate start every JavaScript tool as `bun x --bun --no-install <tool>`, which runs the
 copy `node_modules/.bin` holds, under Bun rather than a `node` on `PATH`, and fetches nothing. That is the one
 spelling: on Windows, `bunx --bun` cannot start wrangler, and vitest started as `bunx` starts its forked workers
-through bunx, which reads their arguments as a package to fetch. Each `test` script adds the loopback names to
+through bunx, which reads their arguments as a package to fetch. wrangler in the `dev`, `start` and `deploy` scripts
+is the exception: it starts without `--bun` ([Running it](#running-it)). Each `test` script adds the loopback names to
 `NO_PROXY` ([Troubleshooting](#troubleshooting)). The hooks are no control ([Safety](#safety)), and they check nothing
 before a start ([Troubleshooting](#troubleshooting)).
 
@@ -99,10 +102,11 @@ bun run dev
 
 That is `wrangler dev`, serving the Worker at a local URL with KV, D1 and the Durable Object simulated. The `dev`
 and `start` scripts run it as `bun x --no-install wrangler dev`, under the first `node` on `PATH`, since
-`wrangler dev` under Bun reports ready and answers no request. Nothing pins that `node`'s version, and on a Windows
-machine at its defaults a `node.exe` at the checkout's root runs ahead of `PATH`, so read a branch before you run
-it there ([Safety](#safety)). Worker secrets for the local run come from `.dev.vars`, copied from
-`.dev.vars.template`. The file is gitignored and holds real values, so nothing reads it but wrangler.
+`wrangler dev` under Bun reports ready and answers no request. `.node-version` names the version CI's deploy job
+installs, and nothing holds your own `node` to it. On a Windows machine at its defaults a `node.exe` at the
+checkout's root runs ahead of `PATH`, so read a branch before you run it there ([Safety](#safety)). Worker secrets
+for the local run come from `.dev.vars`, copied from `.dev.vars.template`. The file is gitignored and holds real
+values, so nothing reads it but wrangler.
 
 A local deploy reads `.env.local`, copied from `.env.local.template`, for the account and the optional domain and
 access key. [docs/deploy.md](docs/deploy.md) says what a deploy does.
@@ -588,6 +592,9 @@ Setup that CI installs at a pinned version takes a line for that copy.
 - Bun itself, in CI: a version alone, named by `packageManager` in `package.json`, which `oven-sh/setup-bun`
   installs in the gate, audit and deploy jobs. The cooldown is the control, because the setup action checks no
   download. Locally, Bun is your own install ([Setup](#setup)).
+- Node.js itself, in CI: a version alone, named by `.node-version`, which `actions/setup-node` installs in the deploy
+  job for wrangler. The cooldown is the control, because the setup action checks no download. Locally, Node.js is
+  your own install ([Setup](#setup)).
 - mise itself, in CI: the publisher's signature, named by the `version:` line of the gate job's `jdx/mise-action`
   step. The action checks the release's checksum file against the key it carries. Locally, mise is your own install
   ([Setup](#setup)).

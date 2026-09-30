@@ -20,9 +20,9 @@ names, and creates them where no such worker exists.
 2. Note the `*.workers.dev` route.
 3. Apply the D1 migrations afterwards. The button flow creates the database but runs no migration, so
    `/history` and audit logging stay dark until you do. The other two paths run the migrations
-   themselves. This step needs [Bun](https://bun.sh) and a clone of this repository with its install, so
-   the wrangler it starts is the one `bun.lock` pins. `--no-install` keeps bunx from fetching one from
-   the registry:
+   themselves. This step needs [Bun](https://bun.sh), [Node.js](https://nodejs.org) and a clone of this
+   repository with its install, so the wrangler it starts is the one `bun.lock` pins. `--no-install`
+   keeps bunx from fetching one from the registry:
    ```sh
    bun install --frozen-lockfile
    bun x --no-install wrangler d1 migrations apply AUDIT_DB --remote
@@ -30,7 +30,8 @@ names, and creates them where no such worker exists.
 
 ### With the CLI
 
-Requires [Bun](https://bun.sh).
+Requires [Bun](https://bun.sh) and [Node.js](https://nodejs.org), as [CONTRIBUTING.md](../CONTRIBUTING.md#setup)
+names them. Every wrangler command below, `bun run deploy` included, runs under the first `node` on `PATH`.
 
 1. Clone this repository and run `bun install`. Every wrangler command below runs the wrangler that
    install puts in the clone, and `--no-install` keeps bunx from fetching one from the registry.
