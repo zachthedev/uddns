@@ -12,6 +12,11 @@
       "description": "typescript is held on the last major carrying the JavaScript compiler API, below the first release typescript-eslint's typescript peer range excludes, because typescript-eslint reads types through that API and the native compiler lacks it. This rule and the @typescript/native alias go once typescript-eslint supports the native compiler: https://typescript-eslint.io/users/dependency-versions",
       "matchDepNames": ["typescript"],
       "allowedVersions": "<6.1.0"
+    },
+    {
+      "description": "vitest is held below its next major, because @cloudflare/vitest-plugin 1.x cannot run under vitest 5. The plugin peers on @vitest/runner, which vitest 5 inlines and does not publish. This rule goes once the plugin's next major ships, and that major lands together with vitest: https://github.com/cloudflare/workers-sdk/pull/15500",
+      "matchPackageNames": ["vitest", "@vitest/**"],
+      "allowedVersions": "<5.0.0"
     }
   ]
 }
