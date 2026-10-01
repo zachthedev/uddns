@@ -81,7 +81,9 @@ workflow's page ([Releasing deploys](#releasing-deploys)).
 
 Give each environment a deployment branch policy, so a workflow pushed on any other branch cannot read
 its secrets. `production` admits `main` and the release tags, `v*`, which a manual deploy run against a
-tag needs ([Operating it](#operating-it)). `release-pr` admits `main` alone.
+tag needs ([Operating it](#operating-it)). `release-pr` admits `main` alone. On each environment, clear
+Allow administrators to bypass configured protection rules, so an administrator's run meets the same rules as
+any other.
 
 The access key is 32 hexadecimal characters (16 random bytes). One comes from `openssl rand -hex 16`,
 or on a machine without openssl from
@@ -150,6 +152,8 @@ pull request is the owner's act.
   fallback for a version older than those. It applies migrations and never reverts one. A manual run
   starts the workflow file in the tree of the ref it names, so it works only for a tag whose tree
   carries `.github/workflows/cd.yml`. For any other tag, `wrangler rollback` is the only way back, and
-  only to a version Cloudflare still keeps.
+  only to a version Cloudflare still keeps. A run on a tag that carries the file runs that tag's copy.
+  Its deploy job lacks every hardening made to `cd.yml` after the tag, such as setup-bun's `no-cache`
+  and the pinned Node.js.
 - A caller reaching past its token's authority for 100 distinct names in a day logs a warning.
   [docs/usage.md](usage.md#refusals) says what counts and what the warning can and cannot catch.
