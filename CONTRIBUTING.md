@@ -390,12 +390,7 @@ the gate on your machine agrees with CI:
   `node_modules` under `scripts/`, since Bun resolves the gate's imports through them;
 - a tracked workflow whose path is not `.github/workflows/<name>.yml` exactly, since actionlint and zizmor read that
   spelling alone, a tracked workflow whose `shell:` is not `bash`, `sh` or `pwsh`, and one the gate cannot read as
-  YAML;
-- a tracked composite action, an `action.yml` or `action.yaml` in any case, outside `.github/actions/` in that exact
-  spelling, or under it named in another case, such as `ACTION.YML`, which zizmor never reads and a case-insensitive
-  runner opens. zizmor reads `.github` alone, in the `workflows` row and in the shared `workflows` job, while
-  `uses: ./<path>` runs an action from anywhere in the checkout, so an action at `tools/x` or under a `.GitHub`
-  would run with no audit.
+  YAML.
 
 Each name is compared with its case folded, so a case variant of a refused name is refused too. The first check
 names the work tree through
@@ -406,7 +401,8 @@ with no system or global config and nothing inherited from your environment.
 The shared `commits` and `workflows` jobs refuse, before a merge, the files that run code or waive a check before
 any gate row reads them. A pull request cannot edit those jobs at the pin `ci.yml` calls, so the gate does not
 repeat them. Code-owner review of `.github/workflows/` is the control on a change to that pin, and on a change to
-the job that runs the gate. The shared jobs refuse:
+the job that runs the gate. Both jobs run their refusals on every pull request, on every push to `main` and daily
+from `audit.yml`. The `commits` job runs its commitlint steps on a pull request alone. The shared jobs refuse:
 
 - a tracked `node_modules`, or a tracked path under one, and every tracked symbolic link, since `bun install` keeps
   one as it finds it and Bun reads through it to a file `bun.lock` never named. The gate keeps its own narrower
@@ -425,8 +421,19 @@ the job that runs the gate. The shared jobs refuse:
   commitlint;
 - a `bunfig.toml` holding any key but `[install] minimumReleaseAge`;
 - `paths` or `baseUrl` in a tracked `tsconfig.json` or `jsconfig.json` or in a file its `extends` chain reads;
+- a tree that does not track `.github/renovate.json` as a file, since without it Renovate reads a root
+  `renovate.json`, a `.renovaterc` or a `package.json` `renovate` key in its place;
+- a `packageManager` other than `bun@X.Y.Z`, and a root `.node-version` other than one `X.Y.Z` line, since
+  setup-bun and setup-node resolve a range or a name such as `latest` when the job runs, past the cooldown;
 - a `zizmor: ignore[...]` comment in a tracked file under `.github`, since a waiver is an entry in
   `.github/zizmor.yml`;
+- a key repeated in one mapping of `.github/zizmor.yml`, an anchor, or a second document, since zizmor keeps the
+  last copy of a repeated audit and a later copy can turn off an audit the first configures;
+- a tracked composite action, an `action.yml` or `action.yaml` in any case, outside `.github/actions/` in that exact
+  spelling, or under it named in another case, such as `ACTION.YML`. zizmor reads `.github` alone, in the
+  `workflows` row and in the `workflows` job. `uses: ./<path>` runs an action from anywhere in the checkout, so one
+  at `tools/x` or under a `.GitHub` would run with no audit. A case-insensitive runner opens `ACTION.YML` for
+  `uses:`, and zizmor never reads it;
 - a job passing `secrets: inherit` to anything but a reusable workflow of `zachthedev/.github`, and a
   `secrets-inherit` waiver that names a position or a file holding no such job, so no waiver outlives its job;
 - a root file named like a program the gate, its hooks or an install start (`bun`, `bunx`, `gh`, `git`, `mise` or
@@ -455,13 +462,15 @@ default-branch ruleset requires that review.
 The `tools` row reads `mise.toml` and `mise.lock` against the expectations in `scripts/tools.ts`, and installs
 from the lockfile only after that read passes. `mise.toml` holds `[tools]`, `[tool_config]` and `[settings]`
 alone, and the last two equal the values in `scripts/tools.ts` exactly, because mise runs a `[hooks]`, `[env]` or
-`[vars]` table on install. Every key of `mise.lock` is one `scripts/tools.ts` names. The row refuses every other
-file mise reads as config or a lockfile in the root, such as `mise.local.toml`, `.tool-versions` or `.miserc.toml`,
-because mise merges each one, and a lockfile beside it, over `mise.lock`. It refuses a link at the root or under
-`.config`, `.mise` or `mise`. Every mise command the gate starts carries an environment built from a short list:
-the temporary directory, the Unix home, a proxy, the Windows folders the system reports, and the gate's own mise
-settings. No other variable reaches mise, so a personal mise setting never changes the gate. `mise.lock` pins
-`linux-x64`, `macos-arm64` and `windows-x64`, and a contributor on another platform relocks in a pull request.
+`[vars]` table on install. Each `[tools]` key is a tool `scripts/tools.ts` expects, spelled exactly, since mise
+reads options written in brackets after a tool's name, `postinstall` among them. Every key of `mise.lock` is one
+`scripts/tools.ts` names. The row refuses every other file mise reads as config or a lockfile in the root, such as
+`mise.local.toml`, `.tool-versions` or `.miserc.toml`, because mise merges each one, and a lockfile beside it, over
+`mise.lock`. It refuses a link at the root or under `.config`, `.mise` or `mise`. Every mise command the gate
+starts carries an environment built from a short list: the temporary directory, the Unix home, a proxy, the
+Windows folders the system reports, and the gate's own mise settings. No other variable reaches mise, so a personal
+mise setting never changes the gate. `mise.lock` pins `linux-x64`, `macos-arm64` and `windows-x64`, and a
+contributor on another platform relocks in a pull request.
 
 In `bun run check`, the `workflows` row runs zizmor online when `gh auth token` answers within five seconds,
 because its advisory, impostor-commit and version-comment audits read the pinned actions' repositories. gh

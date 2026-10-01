@@ -1207,43 +1207,6 @@ test('a shell outside the workflows directory, or in an untracked workflow, yiel
   expect(await trackedFindings()).toEqual([]);
 });
 
-/* ///// Composite actions outside .github/actions ///// */
-
-/** The finding for a tracked composite action at `path` outside .github/actions/. */
-const outsideActions = (path: string): string =>
-  `${JSON.stringify(path)} is a composite action outside .github/actions/, where zizmor reads none, while uses: ./<path> runs one from anywhere in the checkout. Move it under .github/actions/`;
-
-test.each([
-  ['an action under tools', ['tools/x/action.yml'], [outsideActions('tools/x/action.yml')]],
-  ['an action under .GitHub', ['.GitHub/actions/x/action.yml'], [outsideActions('.GitHub/actions/x/action.yml')]],
-  [
-    'an action under an 8.3 short name of .github',
-    ['GITHUB~1/actions/x/action.yml'],
-    [outsideActions('GITHUB~1/actions/x/action.yml')],
-  ],
-  ['an action at the root', ['action.yml'], [outsideActions('action.yml')]],
-  ['an action.yaml in another case', ['ci/Action.YAML'], [outsideActions('ci/Action.YAML')]],
-  [
-    'an action under .github/actions named in another case',
-    ['.github/actions/x/ACTION.YML', '.github/actions/y/Action.yaml'],
-    [
-      `${JSON.stringify('.github/actions/x/ACTION.YML')} names a composite action in another case than action.yml or action.yaml, which zizmor never reads, while a case-insensitive runner opens it for uses:. Rename it action.yml`,
-      `${JSON.stringify('.github/actions/y/Action.yaml')} names a composite action in another case than action.yml or action.yaml, which zizmor never reads, while a case-insensitive runner opens it for uses:. Rename it action.yaml`,
-    ],
-  ],
-  [
-    'an action under .github/actions, nested or not',
-    ['.github/actions/x/action.yml', '.github/actions/y/action.yaml', '.github/actions/deep/sub/action.yml'],
-    [],
-  ],
-  ['a file named otherwise outside .github/actions', ['tools/x/actions.yml', 'tools/x/other.yml'], []],
-  ['an untracked action on disk', [], []],
-])('%s', async (_label: string, tracked: readonly string[], refused: readonly string[]) => {
-  answerGit(tracked, tracked.length === 0 ? ['tools/x/action.yml'] : []);
-
-  expect(await trackedFindings()).toEqual([...refused]);
-});
-
 /* ///// Personal files ///// */
 
 test.each(['lefthook-local.yml', '.lefthook-local'])(
