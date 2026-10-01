@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [1.0.3](https://github.com/zachthedev/uddns/compare/v1.0.2...v1.0.3) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deps:** bump bun ([#267](https://github.com/zachthedev/uddns/issues/267)) ([9dbdf2e](https://github.com/zachthedev/uddns/commit/9dbdf2eb461bda3ceace926f6075f9f1de17b4c2))
+
 ## [1.0.2](https://github.com/zachthedev/uddns/compare/v1.0.1...v1.0.2) (2026-09-19)
 
 
