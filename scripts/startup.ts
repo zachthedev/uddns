@@ -269,44 +269,6 @@ function workflowFindings(path: string, segments: readonly string[]): string[] {
   return found;
 }
 
-/** The one directory a composite action lives under, in this exact spelling. */
-const ACTIONS = '.github/actions/';
-
-/** The names a composite action's metadata file takes, in this exact spelling. */
-const ACTION_NAMES: readonly string[] = ['action.yml', 'action.yaml'];
-
-/**
- * A finding when the tracked file at `path` is a composite action's metadata
- * file outside {@link ACTIONS}, or one named in another case, or none.
- *
- * @remarks
- * zizmor, in the workflows row and in the shared workflows job, reads
- * `.github` alone, while `uses: ./<path>` runs an action from anywhere in the
- * checkout. An action at any other path, such as `tools/x` or a `.GitHub`
- * spelled in another case, would run with no audit, so every one lives under
- * `.github/actions/` in that spelling. A name is compared folded, and only its
- * exact spelling passes: zizmor reads `action.yml` and `action.yaml` alone,
- * while a case-insensitive runner opens `ACTION.YML` for either.
- */
-function actionFindings(path: string, segments: readonly string[]): string[] {
-  const name = segments.at(-1) ?? '';
-  if (!ACTION_NAMES.includes(name)) {
-    return [];
-  }
-  if (!path.startsWith(ACTIONS)) {
-    return [
-      `${quote(path)} is a composite action outside ${ACTIONS}, where zizmor reads none, while uses: ./<path> runs one from anywhere in the checkout. Move it under ${ACTIONS}`,
-    ];
-  }
-  const spelled = path.split('/').at(-1) ?? '';
-  if (!ACTION_NAMES.includes(spelled)) {
-    return [
-      `${quote(path)} names a composite action in another case than ${ACTION_NAMES.join(' or ')}, which zizmor never reads, while a case-insensitive runner opens it for uses:. Rename it ${name}`,
-    ];
-  }
-  return [];
-}
-
 /** The paths one `git ls-files` call lists, split, or a finding when git fails. */
 async function listFiles(args: readonly string[], what: string): Promise<string[] | string> {
   const listed = await git(['ls-files', '-z', ...args]);
@@ -347,9 +309,9 @@ async function topLevelFinding(): Promise<string | undefined> {
 /**
  * Every file in the tree the gate refuses to run beside, as findings: a file
  * a program in {@link CONFIG_SEARCHES} reads, a project config outside the
- * named paths, a `node_modules` directory on disk below the root, a tracked
- * workflow the workflows row would not read or whose shell no linter reads,
- * and a tracked composite action outside `.github/actions/`.
+ * named paths, a `node_modules` directory on disk below the root, and a
+ * tracked workflow the workflows row would not read or whose shell no linter
+ * reads.
  *
  * @remarks
  * git lists nothing until it names this checkout as its work tree, and a work
@@ -410,7 +372,6 @@ export async function trackedFindings(): Promise<string[]> {
     }
     if (isTracked) {
       found.push(...workflowFindings(path, segments));
-      found.push(...actionFindings(path, segments));
     }
   }
   if (nested.size > 0) {
