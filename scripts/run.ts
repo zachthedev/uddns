@@ -342,6 +342,9 @@ async function readAll(stream: unknown, stop: Promise<void>): Promise<string> {
  * @remarks
  * Every process the gate starts goes through here. No row carries a deadline:
  * the CI job's timeout-minutes bounds the gate, and Ctrl-C ends a local run.
+ * Each starts with windowsHide. On Windows a console program, such as the
+ * cmd.exe that runs a .cmd file, opens a console window of its own when the
+ * process starting it has no console, as under an agent or a service.
  * When a process it started still holds its output {@link DRAIN_MS} after it
  * exited, the run fails, and that process runs on, since nothing Bun offers
  * reaches a process whose parent is gone.
@@ -421,6 +424,7 @@ export async function run(
       stdout: 'pipe',
       stderr: 'pipe',
       ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+      windowsHide: true,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

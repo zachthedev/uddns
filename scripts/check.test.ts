@@ -135,8 +135,13 @@ async function outcome(work: () => unknown): Promise<string> {
   return 'passed';
 }
 
-/** The tracked files the fixture tree holds, each written to the working directory by {@link plantTree}. */
-const TRACKED: readonly string[] = ['README.md', 'src/a.ts', 'config.toml', '.github/workflows/ci.yml'];
+/**
+ * The tracked files the fixture tree holds, each written to the working
+ * directory by {@link plantTree}. The types file is among them, as in the
+ * repository, since the cf-typegen:check row holds it and the lint row refuses
+ * a hold naming no tracked file.
+ */
+const TRACKED: readonly string[] = ['README.md', 'src/a.ts', TYPES, 'config.toml', '.github/workflows/ci.yml'];
 
 /** The tracked workflows, which the workflows row reads. */
 const WORKFLOWS: readonly string[] = ['.github/workflows/ci.yml'];
@@ -210,7 +215,7 @@ function passing(cmd: readonly string[]): Answer {
     case 'tsc':
       return cmd.includes('--version')
         ? { stdout: 'Version 7.9.4\n' }
-        : { stdout: `${resolve('src/a.ts').replaceAll('\\', '/')}\n` };
+        : { stdout: ['src/a.ts', TYPES].map((path) => `${resolve(path).replaceAll('\\', '/')}\n`).join('') };
     case 'eslint':
       return { stdout: JSON.stringify([{ filePath: resolve('src/a.ts'), messages: [], suppressedMessages: [] }]) };
     case 'vitest':
@@ -316,8 +321,10 @@ test('loopbackUnproxied: two spellings with different values keep what the envir
 /** Every row but tools, which the mock replaces, run once over the tree in the full form. */
 async function runEveryRow(): Promise<void> {
   plantTree();
-  writeFileSync(TYPES, 'x\n');
   for (const each of check.rows.filter((candidate) => candidate.name !== 'tools')) {
+    // cf-typegen:check deletes the types file and the real wrangler writes it
+    // again, which the recorder does not, so each row starts with it in place.
+    writeFileSync(TYPES, 'x\n');
     expect(`${each.name}: ${await outcome(() => each.check(false))}`).toBe(`${each.name}: passed`);
   }
 }
@@ -449,6 +456,31 @@ test('lint refuses a report from a comment rule that the second pass alone sees'
   );
 });
 
+// ESLint ignores the types file, and the cf-typegen:check row regenerates it
+// and diffs it against the index, so the lint row passes it and says which row
+// holds it.
+test('lint passes the types file cf-typegen:check holds, naming it with that row', async () => {
+  plantTree();
+
+  expect(await row('lint').check(false)).toBe('1 file, 1 held by cf-typegen:check: worker-configuration.d.ts');
+});
+
+// The refusal reads the first pass, so it comes before the second starts.
+test('lint fails on a tracked source file ESLint did not lint, before its second pass', async () => {
+  plantTree();
+  mkdirSync('dist');
+  writeFileSync('dist/b.ts', 'x\n');
+  answer = (cmd: readonly string[]): Answer =>
+    cmd[0] === 'git' && cmd[1] === 'ls-files' && !cmd.includes('--error-unmatch')
+      ? { stdout: [...TRACKED, 'dist/b.ts'].map((path) => `${path}\0`).join('') }
+      : passing(cmd);
+
+  expect(await outcome(() => row('lint').check(false))).toBe(
+    'eslint lints no "dist/b.ts", so no lint rule reads it. Match each with a files pattern in eslint.config.ts and no ignore, or stop tracking it. A file another row regenerates and compares byte for byte can go in that row\'s holds in scripts/check.ts instead, which review alone checks',
+  );
+  expect(callsToTool('eslint')).toHaveLength(1);
+});
+
 test('format names .prettierrc and .prettierignore, reads no .editorconfig, and hands over the files Prettier formats', async () => {
   plantTree();
 
@@ -459,7 +491,7 @@ test('format names .prettierrc and .prettierignore, reads no .editorconfig, and 
   expect(after(cmd, '--config')).toBe('.prettierrc');
   expect(after(cmd, '--ignore-path')).toBe('.prettierignore');
   expect(cmd).toContain('--no-editorconfig');
-  expect([...handed(cmd)].sort()).toEqual(['.github/workflows/ci.yml', 'README.md', 'src/a.ts']);
+  expect([...handed(cmd)].sort()).toEqual(['.github/workflows/ci.yml', 'README.md', 'src/a.ts', TYPES]);
 });
 
 test('toml names .taplo.toml, hands over the tracked TOML files, and asks for its found line', async () => {
@@ -703,6 +735,36 @@ const SELECT_CASES: readonly SelectCase[] = [
     label: 'a row name written as a flag is refused',
     args: ['--typecheck'],
     expected: { refusal: 'no such flag: "--typecheck". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'a flag carrying a value is refused',
+    args: ['--quick=true'],
+    expected: { refusal: 'no such flag: "--quick=true". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'a bare -- is refused',
+    args: ['--', 'lint'],
+    expected: { refusal: 'no such flag: "--". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'two unknown flags are refused together, beside a known one',
+    args: ['--quick', '--quik', '--verbose'],
+    expected: { refusal: 'no such flag: "--quik", "--verbose". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'a flag holding a C1 control sequence is refused with it escaped',
+    args: ['--\u009b31m'],
+    expected: { refusal: 'no such flag: "--\\u009b31m". The gate takes --quick and --rows.' },
+  },
+  {
+    label: 'a flag with one dash reads as a name and is refused',
+    args: ['-q'],
+    expected: { refusal: 'no such row: "-q". bun run check:rows lists them.' },
+  },
+  {
+    label: 'check:quick, a package.json script that is not a row, is refused',
+    args: ['check:quick'],
+    expected: { refusal: 'no such row: "check:quick". bun run check:rows lists them.' },
   },
   {
     label: 'an unknown flag and an unknown name are refused together',
@@ -1061,7 +1123,7 @@ const COLOR_CASES: readonly ColorCase[] = [
     tool: "tsc's --listFiles line",
     answer: (cmd: readonly string[]): Answer =>
       tool(cmd) === 'tsc' && cmd.includes('--listFiles')
-        ? { stdout: `${colored(resolve('src/a.ts').replaceAll('\\', '/'))}\n` }
+        ? { stdout: ['src/a.ts', TYPES].map((path) => `${colored(resolve(path).replaceAll('\\', '/'))}\n`).join('') }
         : passing(cmd),
   },
   {

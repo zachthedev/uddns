@@ -59,10 +59,14 @@ const TEST_FILES = ['**/*{.test,_test,.spec,_spec}.{ts,tsx,mts,cts,js,jsx,mjs,cj
 // alias the typecheck row runs.
 export default defineConfig(
   // flat config reads no .gitignore, so every ignored directory a lint could
-  // reach is named here, the worktrees Claude Code writes included.
+  // reach is named here, the worktrees Claude Code writes included. The lint
+  // row refuses a tracked JavaScript or TypeScript file an ignore covers,
+  // unless another row's holds in scripts/check.ts name it. So an ignore
+  // covers untracked output, or a tracked file another row holds.
   // Deviates from the handbook's kickstart: wrangler writes its bundles and dev
   // state under .wrangler, and generates worker-configuration.d.ts opening with
-  // an unlimited eslint-disable, so both are ignored here too.
+  // an unlimited eslint-disable, so both are ignored here too. The
+  // cf-typegen:check row holds worker-configuration.d.ts.
   globalIgnores([
     'node_modules/**',
     'coverage/**',

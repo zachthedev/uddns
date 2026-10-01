@@ -10,10 +10,13 @@ import {
   comparable,
   compilerFinding,
   ignoreCommentFindings,
+  type HeldFile,
+  heldNote,
   lintedAsWritten,
   lintedWithoutComments,
   taploFound,
   testCount,
+  unlintedSourceFinding,
   unreadSourceFinding,
   zizmorCompleted,
 } from './rows';
@@ -267,6 +270,269 @@ test.each(['x.ts', 'x.mts', 'x.cts', 'x.tsx', 'x.d.ts', 'X.TS'])('%p counts as a
 
 test('every tracked TypeScript file read yields nothing', () => {
   expect(unreadSourceFinding(['src/a.ts', 'docs/b.md'], new Set([comparable('src/a.ts')]))).toBeUndefined();
+});
+
+/* ///// Lint coverage ///// */
+
+/** What the lint row says to do about a tracked file ESLint did not lint, after naming it. */
+const LINT_OR_HOLD =
+  "Match each with a files pattern in eslint.config.ts and no ignore, or stop tracking it. A file another row regenerates and compares byte for byte can go in that row's holds in scripts/check.ts instead, which review alone checks";
+
+/** The lint row's name, the one row whose holds the finding refuses. */
+const LINT = 'lint';
+
+/** The lint row's finding for `path`, one tracked file ESLint did not lint and no row holds. */
+const unlintedLine = (path: string): string =>
+  `eslint lints no ${JSON.stringify(path)}, so no lint rule reads it. ${LINT_OR_HOLD}`;
+
+test('a tracked file ESLint did not lint is named with why and what to do, and one it linted is not', () => {
+  const linted = new Set([comparable('src/a.ts')]);
+
+  expect(unlintedSourceFinding(['src/a.ts', 'dist/b.ts', 'README.md'], linted, [], LINT)).toBe(
+    unlintedLine('dist/b.ts'),
+  );
+});
+
+test('several files ESLint did not lint are named together', () => {
+  expect(
+    unlintedSourceFinding(['coverage/x.js', 'src/c.jsx', 'src/a.ts'], new Set([comparable('src/a.ts')]), [], LINT),
+  ).toEqual(carrying('eslint lints no "coverage/x.js", "src/c.jsx", so no lint rule reads them.'));
+});
+
+// Every extension Bun runs as a module, in any case, since Bun reads one in any
+// case and a files pattern matches one case alone.
+test.each([
+  'x.js',
+  'x.jsx',
+  'x.mjs',
+  'x.cjs',
+  'x.ts',
+  'x.tsx',
+  'x.mts',
+  'x.cts',
+  'x.d.ts',
+  'x.d.mts',
+  'X.TS',
+  'x.Jsx',
+  '.wrangler/probe.ts',
+])('%p counts as a source ESLint lints', (path: string) => {
+  expect(unlintedSourceFinding([path], new Set(), [], LINT)).toEqual(
+    carrying(`eslint lints no ${JSON.stringify(path)}`),
+  );
+});
+
+test.each(['x.json', 'x.md', 'x.mjsx', 'x.ts.txt', 'x.tsxx', 'ts', 'src/jsx', 'x.yml'])(
+  '%p names no source ESLint lints and yields nothing',
+  (path: string) => {
+    expect(unlintedSourceFinding([path], new Set(), [], LINT)).toBeUndefined();
+  },
+);
+
+test('every tracked source linted yields nothing', () => {
+  expect(
+    unlintedSourceFinding(
+      ['src/a.ts', 'commitlint.config.js', 'docs/b.md'],
+      new Set(['src/a.ts', 'commitlint.config.js'].map((path) => comparable(path))),
+      [],
+      LINT,
+    ),
+  ).toBeUndefined();
+});
+
+// A row's holds pass each tracked file the row holds byte for byte. A hold
+// names one file, spelled exactly as git prints it, on every platform, so a
+// pattern, a directory, another spelling of the path, another case and a
+// look-alike letter each name none. A hold that passes nothing, a file held
+// twice and a hold on the lint row itself are each a finding.
+
+/** A generated file a row holds, which ESLint does not lint. */
+const GENERATED = 'gen/types.d.ts';
+
+/** The row that holds {@link GENERATED} in the cases. */
+const TYPES_ROW = 'types:check';
+
+/** The finding against {@link TYPES_ROW}'s hold of `path`, which names no tracked file. */
+const holdsNoFile = (path: string): string =>
+  `the ${TYPES_ROW} row's holds in scripts/check.ts name ${JSON.stringify(path)}, which is no tracked file, so the lint row passes nothing for it. Name the file exactly as git ls-files prints it, or take it out`;
+
+/** The finding against {@link TYPES_ROW}'s hold of `path`, a file the first pass linted. */
+const holdsLinted = (path: string): string =>
+  `the ${TYPES_ROW} row's holds in scripts/check.ts name ${JSON.stringify(path)}, which eslint lints, so the lint row passes nothing for it. Take it out`;
+
+/** The Kelvin sign, which lowercases to an ASCII k. */
+const KELVIN = String.fromCodePoint(0x212a);
+
+test('a file a row holds passes, and every other file ESLint did not lint is still named', () => {
+  expect(
+    unlintedSourceFinding(
+      [GENERATED, 'dist/b.ts', 'src/a.ts'],
+      new Set([comparable('src/a.ts')]),
+      [{ path: GENERATED, row: TYPES_ROW }],
+      LINT,
+    ),
+  ).toBe(unlintedLine('dist/b.ts'));
+});
+
+test.each([
+  ['a generated declaration file', GENERATED],
+  ['a JavaScript file under dist/', 'dist/app.js'],
+])('a hold of %s passes it', (_label: string, path: string) => {
+  expect(
+    unlintedSourceFinding([path, 'src/a.ts'], new Set([comparable('src/a.ts')]), [{ path, row: TYPES_ROW }], LINT),
+  ).toBeUndefined();
+});
+
+interface HoldCase {
+  readonly label: string;
+  readonly tracked: readonly string[];
+  /** The tracked files the first pass reported. */
+  readonly linted: readonly string[];
+  readonly held: readonly HeldFile[];
+  /** The whole finding, one line for each problem. */
+  readonly finding: string;
+}
+
+const HOLD_CASES: readonly HoldCase[] = [
+  {
+    label: 'a hold of a file nobody tracks is refused',
+    tracked: ['src/a.ts'],
+    linted: ['src/a.ts'],
+    held: [{ path: GENERATED, row: TYPES_ROW }],
+    finding: holdsNoFile(GENERATED),
+  },
+  {
+    label: 'a hold of a pattern is refused, and the file the pattern matches stays refused',
+    tracked: [GENERATED],
+    linted: [],
+    held: [{ path: 'gen/*.d.ts', row: TYPES_ROW }],
+    finding: [unlintedLine(GENERATED), holdsNoFile('gen/*.d.ts')].join('\n'),
+  },
+  {
+    label: 'a hold of the directory is refused, and the file in it stays refused',
+    tracked: [GENERATED],
+    linted: [],
+    held: [{ path: 'gen', row: TYPES_ROW }],
+    finding: [unlintedLine(GENERATED), holdsNoFile('gen')].join('\n'),
+  },
+  {
+    label: 'a hold spelled with a leading ./ names no file',
+    tracked: [GENERATED],
+    linted: [],
+    held: [{ path: `./${GENERATED}`, row: TYPES_ROW }],
+    finding: [unlintedLine(GENERATED), holdsNoFile(`./${GENERATED}`)].join('\n'),
+  },
+  {
+    label: 'a hold spelled through a .. segment names no file',
+    tracked: [GENERATED],
+    linted: [],
+    held: [{ path: 'gen/sub/../types.d.ts', row: TYPES_ROW }],
+    finding: [unlintedLine(GENERATED), holdsNoFile('gen/sub/../types.d.ts')].join('\n'),
+  },
+  {
+    label: 'a hold in another case names no file, on every platform',
+    tracked: [GENERATED],
+    linted: [],
+    held: [{ path: 'GEN/Types.d.ts', row: TYPES_ROW }],
+    finding: [unlintedLine(GENERATED), holdsNoFile('GEN/Types.d.ts')].join('\n'),
+  },
+  {
+    label: 'a hold spelled with the Kelvin sign names no file, and the ASCII file stays refused',
+    tracked: ['gen/key.d.ts'],
+    linted: [],
+    held: [{ path: `gen/${KELVIN}ey.d.ts`, row: TYPES_ROW }],
+    finding: [unlintedLine('gen/key.d.ts'), holdsNoFile(`gen/${KELVIN}ey.d.ts`)].join('\n'),
+  },
+  {
+    label: 'of two tracked files that differ in case alone, a hold passes the one it names and not the other',
+    tracked: [GENERATED, 'gen/Types.d.ts'],
+    linted: [],
+    held: [{ path: GENERATED, row: TYPES_ROW }],
+    finding: unlintedLine('gen/Types.d.ts'),
+  },
+  {
+    label: 'a hold of a file the first pass linted is refused',
+    tracked: ['src/a.ts'],
+    linted: ['src/a.ts'],
+    held: [{ path: 'src/a.ts', row: TYPES_ROW }],
+    finding: holdsLinted('src/a.ts'),
+  },
+  {
+    label: 'a hold of a tracked file that is no JavaScript or TypeScript file is refused',
+    tracked: ['README.md'],
+    linted: [],
+    held: [{ path: 'README.md', row: TYPES_ROW }],
+    finding: `the ${TYPES_ROW} row's holds in scripts/check.ts name "README.md", which is no JavaScript or TypeScript file, so the lint row passes nothing for it. Take it out`,
+  },
+  {
+    label: 'a file one row holds twice is refused',
+    tracked: [GENERATED],
+    linted: [],
+    held: [
+      { path: GENERATED, row: TYPES_ROW },
+      { path: GENERATED, row: TYPES_ROW },
+    ],
+    finding: `the ${TYPES_ROW} row's holds in scripts/check.ts name "${GENERATED}" 2 times. Keep it in the holds of the one row that regenerates and compares it`,
+  },
+  {
+    label: 'a file two rows hold is refused, naming both rows',
+    tracked: [GENERATED],
+    linted: [],
+    held: [
+      { path: GENERATED, row: TYPES_ROW },
+      { path: GENERATED, row: 'build' },
+    ],
+    finding: `the ${TYPES_ROW} and build rows' holds in scripts/check.ts name "${GENERATED}" 2 times. Keep it in the holds of the one row that regenerates and compares it`,
+  },
+  {
+    label: 'a hold on the lint row itself is refused',
+    tracked: [GENERATED],
+    linted: [],
+    held: [{ path: GENERATED, row: LINT }],
+    finding: `the lint row's holds in scripts/check.ts name "${GENERATED}", and the lint row cannot hold a file it passes unread. Move it to the holds of the row that regenerates and compares it`,
+  },
+  {
+    label: 'a file ESLint did not lint is named first, then each held path in the order it first appears',
+    tracked: [GENERATED, 'dist/b.ts', 'src/a.ts'],
+    linted: ['src/a.ts'],
+    held: [
+      { path: 'src/a.ts', row: TYPES_ROW },
+      { path: 'gen/none.d.ts', row: TYPES_ROW },
+      { path: GENERATED, row: TYPES_ROW },
+    ],
+    finding: [unlintedLine('dist/b.ts'), holdsLinted('src/a.ts'), holdsNoFile('gen/none.d.ts')].join('\n'),
+  },
+];
+
+test.each([...HOLD_CASES])('$label', ({ tracked, linted, held, finding }: HoldCase) => {
+  expect(unlintedSourceFinding(tracked, new Set(linted.map((path) => comparable(path))), held, LINT)).toBe(finding);
+});
+
+test.each([
+  ['no row holds a file', [], ''],
+  [
+    'one row holds one file',
+    [{ path: 'worker-configuration.d.ts', row: 'cf-typegen:check' }],
+    '1 held by cf-typegen:check: worker-configuration.d.ts',
+  ],
+  [
+    'one row holds two files',
+    [
+      { path: 'gen/a.d.ts', row: TYPES_ROW },
+      { path: 'gen/b.d.ts', row: TYPES_ROW },
+    ],
+    `2 held by ${TYPES_ROW}: gen/a.d.ts, gen/b.d.ts`,
+  ],
+  [
+    'two rows hold files, each group in the order its row first appears',
+    [
+      { path: 'gen/a.d.ts', row: TYPES_ROW },
+      { path: 'dist/app.js', row: 'build' },
+      { path: 'gen/b.d.ts', row: TYPES_ROW },
+    ],
+    `2 held by ${TYPES_ROW}: gen/a.d.ts, gen/b.d.ts, 1 held by build: dist/app.js`,
+  ],
+])('the lint row names each held file with its row when %s', (_label: string, held: HeldFile[], note: string) => {
+  expect(heldNote(held)).toBe(note);
 });
 
 /* ///// The compiler the typecheck row runs ///// */

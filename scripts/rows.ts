@@ -37,7 +37,8 @@ const TYPESCRIPT_SOURCE = /\.[cm]?tsx?$/;
  * @remarks
  * Read is not checked: tsc lists a declaration file and a `@ts-nocheck` file
  * it reads without checking either. A reviewer refuses a declaration file the
- * repository writes, and the lint row refuses `@ts-nocheck`.
+ * repository writes, and the lint row refuses `@ts-nocheck` in every file it
+ * lints.
  */
 export function unreadSourceFinding(tracked: readonly string[], read: ReadonlySet<string>): string | undefined {
   const unread = tracked.filter((path) => TYPESCRIPT_SOURCE.test(fold(path)) && !read.has(comparable(path)));
@@ -67,6 +68,130 @@ export function compilerFinding(printed: string, spec: string): string | undefin
     return `tsc --version printed ${quote(plain(printed).trim())}, and package.json pins major ${pinned}, so node_modules/.bin/tsc is another package's compiler`;
   }
   return undefined;
+}
+
+/* ///// Lint coverage ///// */
+
+/**
+ * A module Bun runs, by the end of its name through {@link fold}: a
+ * JavaScript or TypeScript extension, which Bun reads in any case. The parser
+ * eslint.config.ts sets reads each.
+ */
+const LINTED_SOURCE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+/** A tracked file a row of the gate holds byte for byte, with that row's name. */
+export interface HeldFile {
+  /** The file, exactly as `git ls-files` prints it. */
+  readonly path: string;
+  /** The row whose holds name the file. */
+  readonly row: string;
+}
+
+/** Each held path with the rows that hold it, in the order the paths first appear. */
+function holdersByPath(held: readonly HeldFile[]): Map<string, string[]> {
+  const holders = new Map<string, string[]>();
+  for (const { path, row } of held) {
+    holders.set(path, [...(holders.get(path) ?? []), row]);
+  }
+  return holders;
+}
+
+/**
+ * The findings against `path`, which the rows in `holders` hold: held by the
+ * lint row itself, held more than once, and a hold that passes nothing, since
+ * the path names no file in `tracked`, a file that is no JavaScript or
+ * TypeScript file, or a file in `linted`.
+ */
+function holdFindings(
+  path: string,
+  holders: readonly string[],
+  tracked: ReadonlySet<string>,
+  linted: ReadonlySet<string>,
+  lintRow: string,
+): string[] {
+  const rows = [...new Set(holders)];
+  const holds = `the ${rows.join(' and ')} ${rows.length === 1 ? "row's" : "rows'"} holds in scripts/check.ts`;
+  const findings: string[] = [];
+  if (rows.includes(lintRow)) {
+    findings.push(
+      `the ${lintRow} row's holds in scripts/check.ts name ${quote(path)}, and the ${lintRow} row cannot hold a file it passes unread. Move it to the holds of the row that regenerates and compares it`,
+    );
+  }
+  if (holders.length > 1) {
+    findings.push(
+      `${holds} name ${quote(path)} ${String(holders.length)} times. Keep it in the holds of the one row that regenerates and compares it`,
+    );
+  }
+  if (!tracked.has(path)) {
+    findings.push(
+      `${holds} name ${quote(path)}, which is no tracked file, so the lint row passes nothing for it. Name the file exactly as git ls-files prints it, or take it out`,
+    );
+  } else if (!LINTED_SOURCE.test(fold(path))) {
+    findings.push(
+      `${holds} name ${quote(path)}, which is no JavaScript or TypeScript file, so the lint row passes nothing for it. Take it out`,
+    );
+  } else if (linted.has(comparable(path))) {
+    findings.push(
+      `${holds} name ${quote(path)}, which eslint lints, so the lint row passes nothing for it. Take it out`,
+    );
+  }
+  return findings;
+}
+
+/**
+ * A finding naming every tracked JavaScript or TypeScript file in `tracked`
+ * that ESLint did not lint and no row holds, and every hold that passes
+ * nothing or breaks a rule of holding, or undefined when there is none.
+ * `linted` holds each file the lint row's first pass reported, through
+ * {@link comparable}. `held` lists each file a row's holds name, and `lintRow`
+ * is the lint row's own name.
+ *
+ * @remarks
+ * ESLint lints a file that a config's `files` pattern matches and no ignore
+ * covers, and it names no file it passes over. An ignore meant for untracked
+ * output, such as `dist/**`, hides a file someone tracks there too. A `files`
+ * pattern that misses an extension, such as `.jsx`, or a case of one, such as
+ * `.TS`, hides every file ending in it. A hold names the one tracked file
+ * spelled exactly as git prints it, so it names one file on every platform,
+ * and a pattern names none. A hold that names no tracked JavaScript or
+ * TypeScript file, or one the first pass linted, passes nothing and is
+ * refused, so none outlives its file. A file held twice is refused, and so is
+ * a hold on the lint row itself.
+ */
+export function unlintedSourceFinding(
+  tracked: readonly string[],
+  linted: ReadonlySet<string>,
+  held: readonly HeldFile[],
+  lintRow: string,
+): string | undefined {
+  const holders = holdersByPath(held);
+  const unlinted = tracked.filter(
+    (path) => LINTED_SOURCE.test(fold(path)) && !linted.has(comparable(path)) && !holders.has(path),
+  );
+  const trackedPaths = new Set(tracked);
+  const findings = [
+    ...(unlinted.length === 0
+      ? []
+      : [
+          `eslint lints no ${unlinted.map((path) => quote(path)).join(', ')}, so no lint rule reads ${unlinted.length === 1 ? 'it' : 'them'}. Match each with a files pattern in eslint.config.ts and no ignore, or stop tracking it. A file another row regenerates and compares byte for byte can go in that row's holds in scripts/check.ts instead, which review alone checks`,
+        ]),
+    ...[...holders].flatMap(([path, rows]) => holdFindings(path, rows, trackedPaths, linted, lintRow)),
+  ];
+  return findings.length === 0 ? undefined : findings.join('\n');
+}
+
+/**
+ * What the lint row's line adds for the files other rows hold, one group per
+ * row in the order the rows first appear, such as
+ * `1 held by cf-typegen:check: worker-configuration.d.ts`, or an empty string
+ * when no row holds one.
+ */
+export function heldNote(held: readonly HeldFile[]): string {
+  const byRow = new Map<string, string[]>();
+  for (const { path, row } of held) {
+    byRow.set(row, [...(byRow.get(row) ?? []), path]);
+  }
+  return [...byRow].map(([row, paths]) => `${String(paths.length)} held by ${row}: ${paths.join(', ')}`).join(', ');
 }
 
 /* ///// What ESLint reports ///// */

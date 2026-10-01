@@ -98,6 +98,7 @@ function standIn(
     stdin: typeof script === 'string' ? new TextEncoder().encode(script) : script,
     stdout: 'pipe',
     stderr: 'pipe',
+    windowsHide: true,
   });
   return { exitCode: child.exitCode, stdout: child.stdout.toString(), stderr: child.stderr.toString() };
 }

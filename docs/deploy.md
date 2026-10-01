@@ -147,6 +147,9 @@ pull request is the owner's act.
   code runs against the newer schema, and a migration that drops or rewrites a column takes that
   rollback away. Cloudflare refuses a rollback past a Durable Object class change, such as a class added
   or renamed in `wrangler.jsonc`. A manual run of the deploy workflow against the last good tag is the
-  fallback for a version older than those. It applies migrations and never reverts one.
+  fallback for a version older than those. It applies migrations and never reverts one. A manual run
+  starts the workflow file in the tree of the ref it names, so it works only for a tag whose tree
+  carries `.github/workflows/cd.yml`. For any other tag, `wrangler rollback` is the only way back, and
+  only to a version Cloudflare still keeps.
 - A caller reaching past its token's authority for 100 distinct names in a day logs a warning.
   [docs/usage.md](usage.md#refusals) says what counts and what the warning can and cannot catch.

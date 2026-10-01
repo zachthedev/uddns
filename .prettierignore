@@ -13,7 +13,8 @@
 # Directories a checkout fills locally, which `bun run format` walks into,
 # since --ignore-path keeps .gitignore from narrowing Prettier: build and test
 # output, and Claude Code's worktrees, each a whole checkout of its own.
-# Review refuses a file tracked under any of them.
+# Review and the lint row refuse a file tracked under any of them, unless a
+# row in scripts/check.ts holds it.
 /dist/
 /coverage/
 /.claude/worktrees/
