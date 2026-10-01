@@ -1,4 +1,3 @@
-import { $ } from 'bun';
 import { jsTool } from './run';
 
 /**
@@ -49,15 +48,59 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
+
+/**
+ * This process's environment without ACCESS_KEY, in any case of its name.
+ * Every start is handed it, so the key stays out of the environment each
+ * start is handed, and secret put reads the key on stdin. A local deploy's
+ * wrangler also reads .env.local itself, which holds the key.
+ */
+const startEnv: Record<string, string | undefined> = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => name.toUpperCase() !== 'ACCESS_KEY'),
+);
+
+/**
+ * Runs `bun x --no-install wrangler` with `args` and waits for it.
+ *
+ * @remarks
+ * Each start runs the Bun that runs this script, `process.execPath`, so
+ * neither PATH nor the working directory chooses it. Windows searches the
+ * working directory ahead of PATH for a bare name, which would run a `bun.exe`
+ * there with the account's credentials. The child takes {@link startEnv} and
+ * this process's working directory, writes to this process's stdout and
+ * stderr, and reads `stdin`, this process's own unless a value is given. A
+ * nonzero exit throws, so no later step runs and the deploy exits 1.
+ * windowsHide keeps a console program started from a process with no console
+ * from opening a window.
+ *
+ * @param args - wrangler's arguments, each passed as one argument
+ * @param stdin - What wrangler reads on stdin
+ * @throws When wrangler exits other than 0
+ */
+async function wrangler(args: readonly string[], stdin: 'inherit' | Response = 'inherit'): Promise<void> {
+  const child = Bun.spawn({
+    cmd: [process.execPath, 'x', '--no-install', 'wrangler', ...args],
+    env: startEnv,
+    stdin,
+    stdout: 'inherit',
+    stderr: 'inherit',
+    windowsHide: true,
+  });
+  const exitCode = await child.exited;
+  if (exitCode !== 0) {
+    throw new Error(`Failed with exit code ${String(exitCode)}`);
+  }
+}
+
 console.log('Applying D1 migrations…');
-await $`bun x --no-install wrangler d1 migrations apply AUDIT_DB --remote`;
+await wrangler(['d1', 'migrations', 'apply', 'AUDIT_DB', '--remote']);
 
 if (hasCustomDomain) {
   console.log(`Deploying with custom domain ${customDomain}…`);
-  await $`bun x --no-install wrangler deploy --domain ${customDomain}`;
+  await wrangler(['deploy', '--domain', customDomain]);
 } else {
   console.log('Deploying to the workers.dev URL…');
-  await $`bun x --no-install wrangler deploy`;
+  await wrangler(['deploy']);
 }
 
 // The value reaches wrangler on stdin, never as an argument, so it stays out
@@ -65,7 +108,7 @@ if (hasCustomDomain) {
 const accessKey = process.env['ACCESS_KEY'];
 if (accessKey !== undefined && accessKey !== '') {
   console.log('Syncing ACCESS_KEY worker secret…');
-  await $`bun x --no-install wrangler secret put ACCESS_KEY < ${new Response(accessKey)}`;
+  await wrangler(['secret', 'put', 'ACCESS_KEY'], new Response(accessKey));
 } else {
   console.log('ACCESS_KEY not in environment; skipping secret sync.');
 }

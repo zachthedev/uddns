@@ -55,11 +55,14 @@ import {
   comparable,
   compilerFinding,
   files,
+  type HeldFile,
+  heldNote,
   ignoreCommentFindings,
   lintedAsWritten,
   lintedWithoutComments,
   taploFound,
   testCount,
+  unlintedSourceFinding,
   unreadSourceFinding,
   zizmorCompleted,
 } from './rows';
@@ -121,6 +124,15 @@ export interface Row {
    * file a later row reads, so the preflight runs again before the next row.
    */
   readonly runsCode?: true;
+  /**
+   * The tracked JavaScript or TypeScript files this row holds byte for byte,
+   * such as a generated file it regenerates and diffs against the index, each
+   * spelled exactly as git ls-files prints it. Name each through the constant
+   * the row's check reads, so what the row declares and what it holds stay one
+   * list. The lint row passes each though ESLint does not lint it, and names
+   * each with this row in its line.
+   */
+  readonly holds?: readonly string[];
 }
 
 /** The binary paths the `tools` row resolves, read by the rows after it. */
@@ -471,17 +483,33 @@ async function toml(): Promise<string> {
 
 /* ///// lint ///// */
 
+/** The lint row's name, which no row's holds may name. */
+const LINT = 'lint';
+
 // Two passes, each with the json formatter, which names every file ESLint
 // linted, so the row counts them and prints each problem itself. The first
-// reads every comment and allows no warning. The second reads no comment as a
-// directive or as configuration, and the row refuses every report there from a
-// rule that reads comments, over the same files. rows.ts holds what the row
-// concludes from each. --config names the one config, so ESLint runs no
-// eslint.config.* nearer a file than the root.
+// reads every comment and allows no warning, and the row fails on a tracked
+// JavaScript or TypeScript file it did not lint, unless another row's holds
+// name it. The second reads no comment as a directive or as configuration, and
+// the row refuses every report there from a rule that reads comments, over the
+// same files. rows.ts holds what the row concludes from each. --config names
+// the one config, so ESLint runs no eslint.config.* nearer a file than the
+// root.
 async function lint(): Promise<string> {
   const eslint = [...jsTool('eslint'), '--config', ESLINT_CONFIG];
   const first = lintedAsWritten(await run([...eslint, '.', '--max-warnings=0', '--format', 'json']));
-  return lintedWithoutComments(await run([...eslint, '--no-inline-config', '.', '--format', 'json']), first);
+  const held: HeldFile[] = rows.flatMap((row) => (row.holds ?? []).map((path) => ({ path, row: row.name })));
+  const unlinted = unlintedSourceFinding(
+    await trackedFiles(),
+    new Set(first.map((result) => comparable(result.filePath))),
+    held,
+    LINT,
+  );
+  if (unlinted !== undefined) {
+    throw new Error(unlinted);
+  }
+  const counted = lintedWithoutComments(await run([...eslint, '--no-inline-config', '.', '--format', 'json']), first);
+  return [counted, heldNote(held)].filter((part) => part.length > 0).join(', ');
 }
 
 /* ///// workflows ///// */
@@ -808,11 +836,12 @@ export const rows: readonly Row[] = [
     checks: 'worker-configuration.d.ts, tracked, regenerated from scratch matches the index',
     check: cfTypegen,
     runsCode: true,
+    holds: [TYPES],
   },
   {
-    name: 'lint',
+    name: LINT,
     checks:
-      'eslint over the tree with eslint.config.ts alone and no warnings allowed, counting the files it linted, and no gate/visible-reason report a directive turned off, then eslint again over the same files with --no-inline-config and no report from a rule that reads comments',
+      "eslint over the tree with eslint.config.ts alone and no warnings allowed, counting the files it linted, every tracked JavaScript or TypeScript file among them but those another row's holds name, each named with its row, and no gate/visible-reason report a directive turned off, then eslint again over the same files with --no-inline-config and no report from a rule that reads comments",
     check: lint,
     runsCode: true,
   },

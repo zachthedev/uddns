@@ -85,12 +85,15 @@ async function main(): Promise<number> {
       Reflect.deleteProperty(process.env, name);
     }
   }
+  // windowsHide, as every start under scripts/ passes: a ShellCheck started
+  // from an actionlint with no console opens no console window.
   const child = Bun.spawn({
     cmd: [shellcheck, ...args],
     env: { ...process.env },
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
+    windowsHide: true,
   });
   // The script is written on its own task while both outputs are read, so
   // neither side waits on a full pipe. A ShellCheck that exits before reading

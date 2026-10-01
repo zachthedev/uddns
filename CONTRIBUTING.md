@@ -67,21 +67,30 @@ your machine but the diff read.
 
 What reaches the tools from your own environment:
 
-- `BUN_OPTIONS` reaches every direct Bun start: the gate itself through `bun run check`, `check:quick`,
-  `check:rows` and the push hook, `bun run deploy`, and the `prepare` script's lefthook install. A `--preload` in
-  it runs a module first in each. The gate withholds it from the processes it starts, and a tool started through
-  `bun x --bun --no-install` does not read it. ESLint, Prettier and commitlint, which the hooks start, start no Bun
-  children of their own. wrangler and vitest do: each passes `BUN_OPTIONS` and `BUN_INSPECT_PRELOAD` on to the Bun
-  processes it starts under `--bun`, so the `cf-typegen` and `test` scripts carry it into them. Leave it unset.
+- `BUN_OPTIONS`, which Bun reads as arguments ahead of its own. A `--preload` in it runs a module first in each
+  Bun start that runs code: a file, `bun test` or `bun -e`. Those include the gate itself, whichever script or hook
+  starts it, and a `bun test` you run. `bun install` runs one in the `prepare` script's lefthook install. Where no
+  `node` is on `PATH`, it runs another in lefthook's own install script when the install installs lefthook, as a
+  first install or a lefthook bump does. `--ignore-scripts` stops both. It runs none in `bun install` itself, in
+  `bun run audit`, or in a tool started through `bun x --bun --no-install`. The gate withholds `BUN_OPTIONS` from
+  the processes it starts. A tool started through `bun x` that starts Bun processes of its own passes `BUN_OPTIONS`
+  and `BUN_INSPECT_PRELOAD` on to them. Leave it unset.
 - `BUN_INSPECT`, `BUN_INSPECT_CONNECT_TO` and `BUN_INSPECT_PRELOAD`. Leave them unset too. The last runs a module in
-  every direct Bun start and in the Bun processes wrangler and vitest start, the gate's `scripts:test`,
-  `cf-typegen:check` and `test` rows among them, and nothing in the hooks or the gate clears them.
+  each start where a `--preload` in `BUN_OPTIONS` runs one. The gate withholds `BUN_OPTIONS` but not these. So the
+  last also runs a module in each `bun test` the gate starts, and in the ShellCheck stand-in,
+  `scripts/shellcheck.ts`, that actionlint starts. It runs none in `bun install` itself, in `bun run audit`, or in a
+  tool started through `bun x --bun`.
 - A personal env file. `bun x` ignores `--no-env-file`, so an untracked `.env` or `.env.local` reaches every
   JavaScript tool the hooks, the scripts and the gate's rows start, wrangler and vitest included, and can
   change what one reports. `.env.local` holds the values a local deploy reads ([Running it](#running-it)), so the
   `cf-typegen:check` and `test` rows run with them ([Troubleshooting](#troubleshooting)).
 - `MISE_BACKENDS_<TOOL>`. Leave it unset. It overrides a tool's backend from the environment, no setting reports
   it, and the gate does not close that gap.
+
+In this repository, a preload module also runs in `bun run deploy`, a Bun start that runs a file. wrangler and
+vitest start Bun processes of their own under `--bun` and pass `BUN_OPTIONS` and `BUN_INSPECT_PRELOAD` on to them.
+So the `cf-typegen` and `test` scripts carry both into those processes, and the gate's `cf-typegen:check` and
+`test` rows carry `BUN_INSPECT_PRELOAD`.
 
 The hooks are no control:
 
@@ -149,7 +158,7 @@ Generated files, and the command that writes each:
   `shellcheck.ts` stands in for ShellCheck under actionlint, `eslint-plugin.ts` holds the ESLint rule
   `eslint.config.ts` loads, and `deploy.ts` is the one deploy path. `run.ts`, `tools.ts`, `startup.ts`, `rows.ts`,
   `github.ts`, `shellcheck.ts`, `eslint-plugin.ts` and `stand-ins.ts`, with the suites beside them, are the same in
-  every repository of the set. `check.test.ts` and `repo.test.ts` are this repository's own.
+  every repository of the set. `check.test.ts`, `deploy.test.ts` and `repo.test.ts` are this repository's own.
 - `migrations/` is the D1 schema, one numbered file per change, applied by every deploy.
 - `docs/` is the documentation [README.md#documentation](README.md#documentation) indexes.
 
@@ -162,9 +171,15 @@ Generated files, and the command that writes each:
 - A comment explains why the code is shaped as it is, pointing at something outside the file that is still true.
   What was wrong before and what a change fixed goes in the commit message.
 - Every process a gate script under `scripts/` starts goes through `scripts/run.ts`, from `PATH` alone and with no
-  shell, so an argument is never a shell word. `scripts/deploy.ts` is no gate script: it starts wrangler through
-  Bun Shell, which passes each interpolated value as one argument. A `package.json` script or a hook starts its tool
-  itself.
+  shell, so an argument is never a shell word. `scripts/deploy.ts` is no gate script: it starts wrangler with
+  `Bun.spawn` and an argument list, also with no shell. A `package.json` script or a hook starts its tool itself.
+- Every `Bun.spawn` and `Bun.spawnSync` under `scripts/`, the tests' own included, ends its options with
+  `windowsHide: true`. On Windows a console program opens a console window of its own when the process starting it
+  has no console, as under an agent or a service. A case in `scripts/run.test.ts` reads the direct starts in every
+  JavaScript or TypeScript file under `scripts/` and refuses one without the flag last. It also refuses each other
+  start it can see by name: `Bun.$`, `Bun.openInEditor`, a destructuring of a start from `Bun`, a member named
+  `Bun`, and an import, a `require` or a re-export of a start from `bun` or of `node:child_process`. It follows no
+  value, so review holds a start reached through `Bun` kept in another name or read through `satisfies`.
 - Nothing prints a resource ID, a token or an access key. Logs redact the query string, and the Worker's error
   messages quote inputs encoded and cut short.
 - A message the gate prints that quotes input, such as a path or a value read from a file, JSON-quotes it. A
@@ -218,7 +233,9 @@ The gate's own tests, `scripts/*.test.ts`, run under `bun test` in the `scripts:
 APIs. Each case starts a stand-in, itself a Bun process, in place of every program the gate starts, and their
 `PATH` holds the stand-ins alone. So no case starts your gh, git or mise or reaches the network. The suite covers
 `scripts/rows.ts`, which holds what the rows conclude from their tools' output, and `scripts/check.test.ts` covers
-the command line each row starts and the rows a run's arguments select.
+the command line each row starts and the rows a run's arguments select. `scripts/deploy.test.ts` runs the deploy
+in a checkout whose `node_modules/.bin` holds a compiled stand-in as wrangler, with an environment built from
+scratch and an empty `bun x` cache, so no case reaches wrangler or Cloudflare.
 
 ## The gate
 
@@ -289,14 +306,15 @@ no config at all, so no `package.json` beside a file loads a plugin into the gat
 text: `CODEOWNERS` names the owner for every path, and the default-branch ruleset requires a code owner's review,
 so a change to a config is read before it merges.
 
-Every row that walks the tree says how many files it checked, and fails when that is none. The `typecheck` row
-also fails on a tracked TypeScript file that no project reads. The `format`, `toml` and `workflows` rows hand their
-tool the tracked files, so a new file counts once `git add` names it, and `.gitignore` never hides a tracked one.
-The `format` row also refuses a Prettier ignore comment in any file it checks, since Prettier leaves the code after
-one unformatted and asks no reason. It matches the shape Prettier honors, a comment opener (`//`, `/*`, `#`,
-`<!--`, `{{!` or `{{!--`) then spacing then the keyword, so a document can name the keyword in prose or in
-backticks. The `toml` row checks that taplo reports each file it was handed, and the `workflows` row that
-actionlint and zizmor each report every tracked workflow.
+Every row that walks the tree says how many files it checked, and fails when that is none. The `typecheck` row also
+fails on a tracked TypeScript file that no project reads, and the `lint` row on a tracked JavaScript or TypeScript
+file that ESLint did not lint. The `format`, `toml` and `workflows` rows hand their tool the tracked files, so a new
+file counts once `git add` names it, and `.gitignore` never hides a tracked one. The `format` row also refuses a
+Prettier ignore comment in any file it checks, since Prettier leaves the code after one unformatted and asks no
+reason. It matches the shape Prettier honors, a comment opener (`//`, `/*`, `#`, `<!--`, `{{!` or `{{!--`) then
+spacing then the keyword, so a document can name the keyword in prose or in backticks. The `toml` row checks that
+taplo reports each file it was handed, and the `workflows` row that actionlint and zizmor each report every tracked
+workflow.
 
 actionlint runs ShellCheck through `scripts/shellcheck.ts`, which it hands each workflow script exactly as
 ShellCheck reads it: YAML escapes and folding decoded, and every `${{ }}` expression blanked. The stand-in refuses
@@ -311,10 +329,24 @@ outside `bash`, `sh` and `pwsh`, on a step or under `defaults.run`.
 The `lint` row runs ESLint twice over the tree. The first pass reads every comment and allows no warning. It also
 refuses a report of `gate/visible-reason` that a directive turned off: a directive naming the rule hides the rule's
 report on that directive, and ESLint lists such a report apart from the problems and counts it in no exit code. The
-second pass runs with `--no-inline-config`, which reads no comment as a directive or as configuration, over the
-same files. It refuses every report there from a rule that reads comments: `gate/visible-reason`,
-`@typescript-eslint/ban-ts-comment` and every eslint-comments rule. So a comment that turns one of those rules off,
-`no-use` included, fails the row. The second pass reports each rule a waiver turns off, and the row passes those.
+row then fails on a tracked file ending in `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts` or `.cts`, in any
+case, that the first pass did not lint. Bun runs each of those as a module, and ESLint passes over a file without a
+word where an ignore covers it or no `files` pattern matches it. So a file tracked under an ignored directory such
+as `dist/`, a `.jsx`, or a `.TS` fails the row, unless another row holds it. The second pass runs with
+`--no-inline-config`, which reads no comment as a directive or as configuration, over the same files. It refuses
+every report there from a rule that reads comments: `gate/visible-reason`, `@typescript-eslint/ban-ts-comment` and
+every eslint-comments rule. So a comment that turns one of those rules off, `no-use` included, fails the row. The
+second pass reports each rule a waiver turns off, and the row passes those.
+
+A tracked file ESLint does not read passes the `lint` row when another row's `holds` in `scripts/check.ts` name it.
+A row lists in `holds` each tracked JavaScript or TypeScript file it holds byte for byte, such as a generated file
+it regenerates and diffs against the index. Such a row names each file through the constant its check reads, and
+review checks that it does. In this repository, the `cf-typegen:check` row holds `worker-configuration.d.ts`. The
+`lint` row names each held file with its row in its line. A hold names a file in the exact spelling `git ls-files`
+prints, so it names one file on every platform, and a pattern names none. The row refuses a hold naming no tracked
+JavaScript or TypeScript file, or a file the first pass linted, since it passes nothing. It also refuses a file held
+twice and a hold on the `lint` row itself. So the ignores keep untracked output, and a file another row holds, out
+of the lint.
 
 The `cf-typegen:check` row runs `wrangler types`, which runs any build command `wrangler.jsonc` names, the `lint`
 row runs `eslint.config.ts`, the `scripts:test` row runs the gate's own tests, `bun test ./scripts/`, and the
@@ -400,11 +432,21 @@ the job that runs the gate. The shared jobs refuse:
 - a root file named like a program the gate, its hooks or an install start (`bun`, `bunx`, `gh`, `git`, `mise` or
   `node`), and a root entry named `'`, which actionlint would read in place of the ShellCheck stand-in.
 
-Review refuses what no row checks, since each such file sits in the diff and runs no code: anything under `dist/`,
-`coverage/`, `.claude/worktrees/` or a `.git`, `.sl`, `.svn`, `.hg` or `.jj` directory, a JavaScript or declaration
-file beyond `commitlint.config.js` and `worker-configuration.d.ts`, a path below a personal file's name, a tracked
-`.claude/settings.local.json`, and a tracked `.npmrc`, whose registry would fail every package's integrity check
-against `bun.lock`.
+Review refuses what no row checks, since each such file sits in the diff and runs no code: any file under `dist/`,
+`coverage/` or `.claude/worktrees/` but a JavaScript or TypeScript one, which the `lint` row refuses unless another
+row holds it, anything under a `.git`, `.sl`, `.svn`, `.hg` or `.jj` directory, a JavaScript or declaration file
+beyond `commitlint.config.js` and the files the rows' `holds` name, a path below a personal file's name, and a
+tracked `.claude/settings.local.json`. Review also refuses a tracked `.npmrc`: a registry it names fails every
+package's integrity check against `bun.lock`. A hold lifts more than lint. The `lint` row's `@ts-nocheck` refusal
+never reads a held file, no project reads a JavaScript file, `skipLibCheck` skips every declaration file, and
+`.prettierignore` keeps the three ignored directories out of the `format` row. So for a held JavaScript or
+declaration file under one of those directories, the holding row is the file's one reader. A held `.ts` file
+elsewhere is still typechecked and formatted. In this repository, `worker-configuration.d.ts` is a held
+declaration file outside them, which `skipLibCheck` skips and `.prettierignore` names, so `cf-typegen:check` is
+its one reader too. No check proves that a row's check regenerates and compares each file
+its `holds` name, so review reads the check against each. The coverage checks in the `typecheck` and `lint` rows
+find a file by its extension. Bun also runs a file with no extension as TypeScript, started or imported, and a
+`.es6` file it starts directly. Review alone reads such a tracked file, since neither check names it.
 
 Review also holds the workflows' own lines, such as the gate job's start, its mise-action settings and the frozen
 installs. No row, test or shared job reads them. `CODEOWNERS` names the owner for `.github/workflows/`, and the
@@ -535,6 +577,11 @@ release typescript-eslint's peer range excludes. A rule in `.github/renovate.jso
 checks `tsc --version` against the alias's major before it checks anything. Once typescript-eslint supports the
 native compiler, `typescript` moves to it, and the alias and the rule go.
 
+vitest stays below its next major. `@cloudflare/vitest-plugin` 1.x peers on `@vitest/runner`, which vitest 5
+inlines and does not publish, so the plugin's workers pool cannot start under it. A rule in
+`.github/renovate.json` holds `vitest` and the `@vitest` packages below 5.0.0. Once the plugin's next major ships,
+vitest moves with it, and the rule goes.
+
 The advisory legs:
 
 - The `dependency-review` check in `ci.yml` blocks a pull request on what it adds against its base, and a release
@@ -654,8 +701,12 @@ A local run that fails or disagrees with CI:
   `scripts:test`, `cf-typegen:check` and `test` rows too. Leave all four unset ([Safety](#safety)).
 - A local gate can pass where CI's `commits` or `workflows` job fails, since those jobs refuse files the gate does
   not repeat ([The gate](#the-gate)).
-- A `workflows` row that differs from CI can come from zizmor's online audits. They run on your machine when gh
-  answers with a token and never in CI's gate job. `ZIZMOR_OFFLINE=1` runs what CI runs.
+- A `workflows` row that differs from CI can come from zizmor's online audits. Three of them can fail a
+  hash-pinned workflow: a known-vulnerable action, an impostor commit, and a hash pin whose version comment names
+  another tag. An offline run sees none of the three. The row runs them only in `bun run check`, when gh answers
+  with a token. CI's gate job runs offline, and the shared `workflows` job runs them online on every pull request.
+  So a local row green offline can meet a red `workflows` job, and a local row red online can meet a green gate
+  job. `ZIZMOR_OFFLINE=1` runs what CI's gate job runs.
 - Behind an HTTP proxy, Bun sends a request to localhost through `HTTP_PROXY` unless `NO_PROXY` names it, where
   Node's clients do not. wrangler's type generation and vitest's workers pool then cannot reach the workerd they
   start. The `cf-typegen:check` and `test` rows add the loopback names to `NO_PROXY`, and so does each `test`

@@ -2,7 +2,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, setDefaultTimeout, 
 import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, join, sep } from 'node:path';
+import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
+import { ESLint, type Rule } from 'eslint';
+import { defineConfig } from 'eslint/config';
+import tseslint from 'typescript-eslint';
 import { fold, git, jsTool, resolveProgram, run } from './run';
 import { isolate, launcherName, spellings, StandIns, WINDOWS } from './stand-ins';
 import { trackedFindings } from './startup';
@@ -183,6 +186,314 @@ test('a program no PATH entry holds exits 127, saying which and that the working
   expect(finished.stderr).toStartWith('"gate-absent-program": ');
   expect(finished.stderr).toContain('working directory is never searched');
   expect(started()).toEqual([]);
+});
+
+/* ///// Console windows ///// */
+
+// On Windows a console program opens a console window of its own when the
+// process starting it has no console, as under an agent or a service, unless
+// the start passes windowsHide. So every Bun.spawn and Bun.spawnSync call in a
+// JavaScript or TypeScript file under scripts/, the suites' own included, ends
+// its options with windowsHide: true, and the check below reads each such file
+// as ESLint parses it. It also refuses each other start it can see by name:
+// Bun.$ and Bun.openInEditor, a destructuring of a start from Bun, a member
+// named Bun, and an import, a require or a re-export of a start from bun or of
+// node:child_process. It follows no value, so review holds a start reached
+// through Bun kept in another name or read through a satisfies expression.
+
+/** The repository root, whose scripts/ the check reads. */
+const ROOT = join(import.meta.dir, '..');
+
+/** Every file the check reads: each JavaScript or TypeScript file under scripts/, at any depth. */
+const SCRIPT_FILES = 'scripts/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx}';
+
+/** The Bun functions that start a process with an options object. */
+const SPAWNS: readonly string[] = ['spawn', 'spawnSync'];
+
+/** Every Bun function that starts a process: the two above, and two that take no windowsHide. */
+const STARTS: readonly string[] = [...SPAWNS, '$', 'openInEditor'];
+
+/** The modules a start can be imported from. */
+const START_MODULES: readonly string[] = ['bun', 'node:child_process', 'child_process'];
+
+/** A node as the check reads it: its type, and the name or the value it can carry. */
+interface Named {
+  readonly type: string;
+  readonly name?: unknown;
+  readonly value?: unknown;
+}
+
+/**
+ * The name a key, a member or an import spells, or undefined when a computed
+ * key reads it from a value.
+ */
+function spelled(node: Named, computed: boolean): string | undefined {
+  if (node.type === 'Literal') {
+    return typeof node.value === 'string' ? node.value : undefined;
+  }
+  return node.type === 'Identifier' && !computed && typeof node.name === 'string' ? node.name : undefined;
+}
+
+/** Whether a node that can be type-only, such as an import, an export or a specifier of either, is. */
+function typeOnly(node: {
+  readonly type: string;
+  readonly importKind?: unknown;
+  readonly exportKind?: unknown;
+}): boolean {
+  return node.importKind === 'type' || node.exportKind === 'type';
+}
+
+/** Whether `source`, what an import, an export or a require names, is a module a start can come from. */
+function startModule(source: Named | null | undefined): boolean {
+  return source !== null && source !== undefined && START_MODULES.includes(spelled(source, true) ?? '');
+}
+
+/** Each file in which the check passed a start, one entry for each start. */
+let hiddenStarts: string[] = [];
+
+const hiddenWindows: Rule.RuleModule = {
+  meta: {
+    type: 'problem',
+    schema: [],
+    messages: {
+      shown:
+        'This start does not end its options with windowsHide: true, so on Windows it can open a console window when the process starting it has no console. End its options with windowsHide: true.',
+      reached:
+        'This starts a process another way than a Bun.spawn or Bun.spawnSync call, where windowsHide cannot be checked. Call Bun.spawn or Bun.spawnSync with windowsHide: true.',
+    },
+  },
+  create(context: Rule.RuleContext): Rule.RuleListener {
+    return {
+      MemberExpression(node): void {
+        const property = spelled(node.property, node.computed);
+        if (property === 'Bun') {
+          context.report({ node, messageId: 'reached' });
+          return;
+        }
+        if (node.object.type !== 'Identifier' || node.object.name !== 'Bun' || !STARTS.includes(property ?? '')) {
+          return;
+        }
+        const call = node.parent;
+        if (!SPAWNS.includes(property ?? '') || call.type !== 'CallExpression' || call.callee !== node) {
+          context.report({ node, messageId: 'reached' });
+          return;
+        }
+        // The flag is the options' last property, so no spread after it can
+        // set it back.
+        const [first, second] = call.arguments;
+        const options = first?.type === 'ObjectExpression' ? first : second;
+        const last = options?.type === 'ObjectExpression' ? options.properties.at(-1) : undefined;
+        const hidden =
+          last?.type === 'Property' &&
+          spelled(last.key, last.computed) === 'windowsHide' &&
+          last.value.type === 'Literal' &&
+          last.value.value === true;
+        if (hidden) {
+          hiddenStarts.push(context.filename);
+        } else {
+          context.report({ node: call, messageId: 'shown' });
+        }
+      },
+      VariableDeclarator(node): void {
+        if (
+          node.init?.type === 'Identifier' &&
+          node.init.name === 'Bun' &&
+          node.id.type === 'ObjectPattern' &&
+          node.id.properties.some(
+            (property) =>
+              property.type === 'Property' && STARTS.includes(spelled(property.key, property.computed) ?? ''),
+          )
+        ) {
+          context.report({ node, messageId: 'reached' });
+        }
+      },
+      ImportDeclaration(node): void {
+        if (typeOnly(node) || !startModule(node.source)) {
+          return;
+        }
+        const values = node.specifiers.filter((specifier) => !typeOnly(specifier));
+        const reaches =
+          node.source.value === 'bun'
+            ? values.some(
+                (specifier) =>
+                  specifier.type !== 'ImportSpecifier' || STARTS.includes(spelled(specifier.imported, false) ?? ''),
+              )
+            : values.length > 0;
+        if (reaches) {
+          context.report({ node, messageId: 'reached' });
+        }
+      },
+      ImportExpression(node): void {
+        if (startModule(node.source)) {
+          context.report({ node, messageId: 'reached' });
+        }
+      },
+      CallExpression(node): void {
+        if (node.callee.type === 'Identifier' && node.callee.name === 'require' && startModule(node.arguments[0])) {
+          context.report({ node, messageId: 'reached' });
+        }
+      },
+      ExportAllDeclaration(node): void {
+        if (!typeOnly(node) && startModule(node.source)) {
+          context.report({ node, messageId: 'reached' });
+        }
+      },
+      ExportNamedDeclaration(node): void {
+        if (typeOnly(node) || !startModule(node.source)) {
+          return;
+        }
+        const values = node.specifiers.filter((specifier) => !typeOnly(specifier));
+        const reaches =
+          node.source?.value === 'bun'
+            ? values.some((specifier) => STARTS.includes(spelled(specifier.local, false) ?? ''))
+            : values.length > 0;
+        if (reaches) {
+          context.report({ node, messageId: 'reached' });
+        }
+      },
+    };
+  },
+};
+
+/**
+ * An ESLint that runs the check alone over files under `root`, with no type
+ * information and no inline configuration, so no comment can waive the check
+ * and no comment naming another plugin's rule can fail it.
+ */
+function windowCheck(root: string): ESLint {
+  return new ESLint({
+    cwd: root,
+    overrideConfigFile: true,
+    allowInlineConfig: false,
+    overrideConfig: defineConfig({
+      files: ['**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx}'],
+      languageOptions: { parser: tseslint.parser },
+      plugins: { windows: { rules: { hidden: hiddenWindows } } },
+      rules: { 'windows/hidden': 'error' },
+    }),
+  });
+}
+
+/** What the check reports over every script file under `root`, as each file's path from `root` and the report's kind. */
+async function windowReports(root: string): Promise<string[]> {
+  const results = await windowCheck(root).lintFiles([SCRIPT_FILES]);
+  return results
+    .flatMap((result) =>
+      result.messages.map(
+        (message) =>
+          `${relative(root, result.filePath).replaceAll('\\', '/')}:${String(message.line)} ${message.messageId ?? message.message}`,
+      ),
+    )
+    .sort();
+}
+
+test('every Bun.spawn and Bun.spawnSync under scripts/ ends its options with windowsHide: true, and nothing there starts a process another way', async () => {
+  hiddenStarts = [];
+
+  expect(await windowReports(ROOT)).toEqual([]);
+  // The check read the files that start processes, so its silence is no empty read.
+  expect(hiddenStarts.map((file) => basename(file))).toEqual(
+    expect.arrayContaining(['run.ts', 'shellcheck.ts']) as string[],
+  );
+});
+
+/** Writes an unhidden start at each of `names` under the case's scripts/ directory. */
+function plantStarts(names: readonly string[]): void {
+  for (const name of names) {
+    mkdirSync(dirname(join(cwd, 'scripts', name)), { recursive: true });
+    writeFileSync(join(cwd, 'scripts', name), "Bun.spawnSync({ cmd: ['x'] });\n");
+  }
+}
+
+test('the check reads a script file in a subdirectory', async () => {
+  plantStarts(['helpers/nested.ts']);
+
+  expect(await windowReports(cwd)).toEqual(['scripts/helpers/nested.ts:1 shown']);
+});
+
+test('the check reads a script file of each JavaScript or TypeScript extension', async () => {
+  plantStarts(['start.mts', 'start.cts', 'start.tsx', 'start.js', 'start.mjs', 'start.cjs', 'start.jsx']);
+
+  expect(await windowReports(cwd)).toEqual([
+    'scripts/start.cjs:1 shown',
+    'scripts/start.cts:1 shown',
+    'scripts/start.js:1 shown',
+    'scripts/start.jsx:1 shown',
+    'scripts/start.mjs:1 shown',
+    'scripts/start.mts:1 shown',
+    'scripts/start.tsx:1 shown',
+  ]);
+});
+
+test.each([
+  ['an object ending with windowsHide: true', "Bun.spawn({ cmd: ['x'], windowsHide: true });\n", []],
+  ['a sync start ending with it', "Bun.spawnSync({ cmd: ['x'], windowsHide: true });\n", []],
+  ['options beside an argument list', "Bun.spawn(['x'], { windowsHide: true });\n", []],
+  ['the key in quotes', "Bun.spawn({ cmd: ['x'], 'windowsHide': true });\n", []],
+  [
+    'a spread before the flag',
+    "declare const base: { windowsHide?: boolean };\nBun.spawn({ cmd: ['x'], ...base, windowsHide: true });\n",
+    [],
+  ],
+  ['no options', "Bun.spawn(['x']);\n", ['shown']],
+  ['options without the key', "Bun.spawnSync({ cmd: ['x'] });\n", ['shown']],
+  ['the key set false', "Bun.spawn({ cmd: ['x'], windowsHide: false });\n", ['shown']],
+  [
+    'the key read from a variable',
+    "declare const hide: boolean;\nBun.spawn({ cmd: ['x'], windowsHide: hide });\n",
+    ['shown'],
+  ],
+  [
+    'options from a variable',
+    'declare const options: Bun.SpawnOptions.OptionsObject;\nBun.spawn(options);\n',
+    ['shown'],
+  ],
+  [
+    'a spread after the flag, which can set it back',
+    "declare const base: { windowsHide?: boolean };\nBun.spawn({ cmd: ['x'], windowsHide: true, ...base });\n",
+    ['shown'],
+  ],
+  ['the key nested in env', "Bun.spawn({ cmd: ['x'], env: { windowsHide: 'true' } });\n", ['shown']],
+  ['a computed name without the key', "Bun['spawn']({ cmd: ['x'] });\n", ['shown']],
+  [
+    'a waiver of the check above a start, since no comment is read',
+    "// eslint-disable-next-line windows/hidden -- the start is hidden elsewhere\nBun.spawn({ cmd: ['x'] });\n",
+    ['shown'],
+  ],
+  [
+    "a waiver of another plugin's rule and no start",
+    '// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- nothing starts here\nexport const value = 1;\n',
+    [],
+  ],
+  ['an alias', 'const start = Bun.spawn;\n', ['reached']],
+  ['a destructuring', 'const { spawnSync } = Bun;\n', ['reached']],
+  ['a destructuring by a computed name', "const { ['spawnSync']: start } = Bun;\n", ['reached']],
+  ['a member named Bun', "globalThis.Bun.spawnSync({ cmd: ['x'] });\n", ['reached']],
+  ["Bun's shell", 'await Bun.$`ls`;\n', ['reached']],
+  ["Bun's editor start", "Bun.openInEditor('a.ts');\n", ['reached']],
+  ['spawn imported from bun', "import { spawn } from 'bun';\n", ['reached']],
+  ['$ imported from bun', "import { $ } from 'bun';\n", ['reached']],
+  ['bun imported whole', "import * as bun from 'bun';\n", ['reached']],
+  ["bun's default import", "import bun from 'bun';\n", ['reached']],
+  ['a dynamic import of bun', "export const bun = await import('bun');\n", ['reached']],
+  ['a start re-exported from bun', "export { spawnSync } from 'bun';\n", ['reached']],
+  ['node:child_process', "import { execFile } from 'node:child_process';\n", ['reached']],
+  ['child_process', "import cp from 'child_process';\n", ['reached']],
+  [
+    'a dynamic import of node:child_process',
+    "export const childProcess = await import('node:child_process');\n",
+    ['reached'],
+  ],
+  ['a require of child_process', "export const childProcess = require('child_process');\n", ['reached']],
+  ['node:child_process re-exported whole', "export * from 'node:child_process';\n", ['reached']],
+  ['a type imported from node:child_process', "import type * as ChildProcess from 'node:child_process';\n", []],
+  ["a start's type imported from bun", "import { type spawn } from 'bun';\n", []],
+  ['another name imported from bun', "import { file } from 'bun';\n", []],
+])('a start written as %s is judged', async (_label: string, text: string, expected: readonly string[]) => {
+  const [result] = await windowCheck(ROOT).lintText(text, { filePath: join(ROOT, 'scripts', 'window-probe.ts') });
+
+  const kinds: string[] = (result?.messages ?? []).map((message) => message.messageId ?? message.message);
+  expect(kinds).toEqual([...expected]);
 });
 
 /* ///// Name folding ///// */
@@ -447,7 +758,7 @@ test.each(PLANTED_CASES)(
     // The fixture holds only when a bare spawn, with the variable that hides
     // the working directory absent as on a runner, starts the planted file.
     expect(spellings(process.env, 'NoDefaultCurrentDirectoryInExePath')).toEqual([]);
-    Bun.spawnSync({ cmd: [name, 'probe'], cwd, env: { ...process.env }, timeout: PROBE_MS });
+    Bun.spawnSync({ cmd: [name, 'probe'], cwd, env: { ...process.env }, timeout: PROBE_MS, windowsHide: true });
     expect(started()).toEqual([`planted-${name}`]);
     standIns.clear();
 
@@ -621,7 +932,12 @@ test.each([
       Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GATE_ENV_')),
     );
     const read = (flags: readonly string[]): string =>
-      Bun.spawnSync({ cmd: [process.execPath, ...flags, 'print.ts'], cwd, env: { ...env, NODE_ENV: mode } })
+      Bun.spawnSync({
+        cmd: [process.execPath, ...flags, 'print.ts'],
+        cwd,
+        env: { ...env, NODE_ENV: mode },
+        windowsHide: true,
+      })
         .stdout.toString()
         .trim();
 

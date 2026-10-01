@@ -115,6 +115,7 @@ function child(code: string, extra: Readonly<Record<string, string>>): string {
     stdout: 'pipe',
     stderr: 'pipe',
     timeout: 30_000,
+    windowsHide: true,
   });
   expect(finished.exitCode).toBe(0);
   return finished.stdout.toString().trim();
