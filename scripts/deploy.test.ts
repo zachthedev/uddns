@@ -202,17 +202,23 @@ interface Deployed {
   readonly starts: readonly Start[];
 }
 
-/** Runs the deploy in the case's checkout with `env` over the base environment. */
+/**
+ * Runs the deploy in the case's checkout with `env` over the base environment,
+ * writing {@link PIPED} to its stdin through a pipe, as a shell or a runner
+ * hands it one, and closing it.
+ */
 async function deploy(env: Readonly<Record<string, string>>): Promise<Deployed> {
   const child = Bun.spawn({
     cmd: [process.execPath, DEPLOY],
     cwd,
     env: { ...baseEnv(), STANDIN_LOG: log, DEPLOY_TEST_ENV: 'carried', ...env },
-    stdin: new Response(PIPED),
+    stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
     windowsHide: true,
   });
+  await child.stdin.write(PIPED);
+  await child.stdin.end();
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
