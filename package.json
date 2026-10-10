@@ -27,7 +27,7 @@
     "prepare": "bun ./node_modules/lefthook/bin/index.js install"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "1.1.13",
+    "@cloudflare/vitest-plugin": "1.3.7",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
     "@eslint-community/eslint-plugin-eslint-comments": "4.8.1",
@@ -44,7 +44,7 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.1",
     "vitest": "4.1.11",
-    "wrangler": "4.135.0",
+    "wrangler": "4.148.0",
     "yaml": "2.9.1",
     "zod": "4.6.5"
   },
