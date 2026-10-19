@@ -17,7 +17,7 @@
 # actionlint and zizmor attest their releases, so mise.lock records provenance
 # and every install verifies the artifact against the attestation.
 actionlint = "1.7.12"
-zizmor = "1.30.1"
+zizmor = "1.31.1"
 # shellcheck and taplo carry no attestation. Each is a checksum in a pinned
 # tree: mise.lock records the sha256 of the artifact, and the lockfile is
 # reviewed with the bump that rewrites it. taplo's release predates GitHub's
