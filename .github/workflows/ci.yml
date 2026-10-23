@@ -103,13 +103,13 @@ jobs:
       # No base or head input: the action then scans the pull request's
       # base..head commits, or a push's before..after. A branch name as base
       # does not resolve in a pull request checkout, and the scan reads nothing.
-      - uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
+      - uses: trufflesecurity/trufflehog@e63326d6545de8f425d93ce24078c6e68d83f70e # v3.99.3
         with:
           path: ./
           # The action runs the scanner from a Docker image tagged with this
           # input, which defaults to latest. Pinning the SHA above fixes only
           # the action's own script, so the image is pinned here by digest.
-          version: 3.97.9@sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db
+          version: 3.99.3@sha256:63b6120f410beb64aea4e421f1ed277248e14b2942d124df289422b623f610d8
 
   # A called workflow's job gets at most what its caller grants here, so each job grants what
   # the called job's header declares: a checkout and the read-only audits, nothing more.
